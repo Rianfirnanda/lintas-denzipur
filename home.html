@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>if (top === self) location.replace('admin.html#home');</script>
+<link rel="icon" type="image/png" href="https://firebasestorage.googleapis.com/v0/b/lintas-benteng.firebasestorage.app/o/assets%2Fdenzipur%2014%20logo.png?alt=media&token=dc433442-00dd-40d5-93b1-a2529c9813b0">
+<link rel="preload" as="image" href="https://firebasestorage.googleapis.com/v0/b/lintas-benteng.firebasestorage.app/o/assets%2Flintas_new%20(1).png?alt=media&token=7742714a-1063-4ff2-8591-6e0183724931">
+<link rel="preload" as="image" href="https://firebasestorage.googleapis.com/v0/b/lintas-benteng.firebasestorage.app/o/assets%2Fdenzipur%2014%20logo.png?alt=media&token=dc433442-00dd-40d5-93b1-a2529c9813b0">
+<title>Lintas Denzipur</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="theme-light.css">
+<script src="theme.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/feather-icons/4.29.0/feather.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+<style>
+:root{
+  --bg:#0a0a0a; --border:rgba(255,255,255,0.1);
+  --blue:#3b82f6; --purple:#8b5cf6; --teal:#06b6d4; --green:#22c55e; --orange:#f59e0b; --red:#ef5350;
+  --text:#e5e5e5; --muted:#a0a0a0; --sidebar-w:260px;
+  --ease:cubic-bezier(0.22,1,0.36,1);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes fadeUp{from{opacity:0;transform:translate3d(0,12px,0)}to{opacity:1;transform:none}}
+
+
+/* ═════════ APP (ADMIN) ═════════ */
+#app{display:none;min-height:100vh}
+#app.show{display:flex}
+.sidebar{width:var(--sidebar-w);background:rgba(10,10,10,.98);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;top:0;left:0;height:100vh;z-index:200;transition:transform .3s ease;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.sidebar-logo{padding:24px 24px 20px;border-bottom:1px solid var(--border);text-align:center}
+.logo-pair{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:12px}
+.logo-pair img{width:auto;object-fit:contain}
+.logo-pair .l1{height:34px}.logo-pair .l2{height:48px}
+.logo-pair span{color:var(--muted);font-size:12px}
+.s-title{font-size:13px;font-weight:800;letter-spacing:.12em;background:linear-gradient(135deg,var(--blue),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.s-badge{display:block;margin-top:4px;font-size:10px;font-weight:600;letter-spacing:.12em;color:#555;text-transform:uppercase}
+.sidebar-user{padding:16px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px}
+.avatar{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--blue),var(--purple));display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff;flex-shrink:0;overflow:hidden}
+.avatar img{width:100%;height:100%;object-fit:cover}
+.user-meta{min-width:0}
+.user-meta small{display:block;font-size:10px;color:#555;text-transform:uppercase;letter-spacing:.08em;font-weight:600}
+.user-meta span{display:block;font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sidebar-nav{flex:1;padding:16px 12px}
+.nav-label{font-size:9px;font-weight:700;letter-spacing:.15em;color:#555;text-transform:uppercase;padding:8px 12px 6px;margin-top:8px}
+.nav-item{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--muted);text-decoration:none;font-size:13.5px;font-weight:500;transition:all .2s;margin-bottom:2px;border:1px solid transparent}
+.nav-item:hover{color:var(--text);background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.1)}
+.nav-item.active{color:var(--blue);background:rgba(59,130,246,.1);border-color:rgba(59,130,246,.2)}
+.nav-item svg{width:16px;height:16px;flex-shrink:0;stroke-width:1.8}
+.nav-item .badge{margin-left:auto;background:rgba(59,130,246,.2);color:var(--blue);font-size:10px;font-weight:700;padding:2px 7px;border-radius:20px}
+.sidebar-footer{padding:16px 12px;border-top:1px solid var(--border)}
+.logout-btn{display:flex;align-items:center;gap:10px;width:100%;padding:10px 12px;border-radius:10px;border:1px solid rgba(239,83,80,.2);background:rgba(239,83,80,.05);color:#f87171;font-size:13.5px;font-weight:500;cursor:pointer;transition:all .2s;font-family:inherit}
+.logout-btn:hover{background:rgba(239,83,80,.15);border-color:rgba(239,83,80,.4)}
+.logout-btn svg{width:16px;height:16px;stroke-width:1.8}
+.topbar{position:fixed;top:0;left:var(--sidebar-w);right:0;height:64px;background:rgba(10,10,10,.95);backdrop-filter:blur(10px);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 28px;z-index:100}
+.topbar-left{display:flex;align-items:center;gap:12px}
+.hamburger{display:none;background:none;border:none;cursor:pointer;color:var(--muted);padding:4px}
+.hamburger svg{width:20px;height:20px}
+.breadcrumb{font-size:13px;color:var(--muted)}.breadcrumb span{color:var(--text);font-weight:600}
+.topbar-right{display:flex;align-items:center;gap:16px}
+.topbar-time{font-size:13px;color:var(--muted);font-weight:500}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);animation:pulse 2s infinite}
+.main{margin-left:0;padding-top:0;flex:1;min-width:0;min-height:100vh}
+.content{padding:32px 28px}
+.page-header{margin-bottom:24px}
+.page-header h1{font-size:30px;font-weight:700;letter-spacing:-.02em;color:#fff}
+.page-header p{font-size:14px;color:var(--muted);margin-top:6px}
+.hero{position:relative;overflow:hidden;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:20px;padding:32px;margin-bottom:28px;display:grid;grid-template-columns:1.5fr 1fr;gap:32px;align-items:center}
+.hero::before{content:'';position:absolute;width:420px;height:420px;right:-120px;top:-160px;background:radial-gradient(circle,rgba(139,92,246,.22),transparent 65%);pointer-events:none}
+.hero-tag{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--blue);background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.25);padding:4px 10px;border-radius:20px;margin-bottom:14px}
+.hero h2{font-size:24px;font-weight:800;color:#fff;letter-spacing:-.01em;line-height:1.25}
+.hero h2 em{font-style:normal;background:linear-gradient(135deg,var(--blue),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.hero p{font-size:13.5px;color:var(--muted);line-height:1.7;margin-top:12px}
+.hero-logos{position:relative;display:flex;align-items:center;justify-content:center;gap:18px}
+.hero-logos img{width:auto;object-fit:contain;filter:drop-shadow(0 8px 24px rgba(59,130,246,.3))}
+.hero-logos .l1{height:86px}.hero-logos .l2{height:126px}
+.hero-logos span{color:var(--muted);font-size:20px;font-weight:300}
+.section-title{font-size:16px;font-weight:700;color:#fff;margin-bottom:16px;display:flex;align-items:center;gap:10px}
+.section-title::after{content:'';flex:1;height:1px;background:var(--border)}
+.feature-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:28px}
+.feature{background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:16px;padding:20px;transition:all .3s ease}
+.feature:hover{transform:translateY(-4px);border-color:rgba(59,130,246,.4);box-shadow:0 12px 40px rgba(59,130,246,.15)}
+.feature .ic{width:42px;height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;margin-bottom:14px;background:linear-gradient(135deg,rgba(59,130,246,.15),rgba(139,92,246,.15))}
+.feature .ic svg{width:20px;height:20px;stroke:var(--blue);stroke-width:1.8}
+.feature h4{font-size:14px;font-weight:700;color:#fff}
+.feature p{font-size:12px;color:var(--muted);line-height:1.6;margin-top:6px}
+.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:28px}
+.stat-card{position:relative;overflow:hidden;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:16px;padding:22px;transition:transform .2s,border-color .2s}
+.stat-card:hover{transform:translateY(-2px);border-color:rgba(255,255,255,.15)}
+.stat-card::after{content:'';position:absolute;top:0;left:0;right:0;height:2px}
+.stat-card.blue::after{background:var(--blue)}.stat-card.purple::after{background:var(--purple)}.stat-card.teal::after{background:var(--teal)}.stat-card.green::after{background:var(--green)}
+.stat-icon{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:16px}
+.stat-icon svg{width:20px;height:20px;stroke-width:1.8}
+.stat-icon.blue{background:rgba(59,130,246,.12)}.stat-icon.blue svg{stroke:var(--blue)}
+.stat-icon.purple{background:rgba(139,92,246,.12)}.stat-icon.purple svg{stroke:var(--purple)}
+.stat-icon.teal{background:rgba(6,182,212,.12)}.stat-icon.teal svg{stroke:var(--teal)}
+.stat-icon.green{background:rgba(34,197,94,.12)}.stat-icon.green svg{stroke:var(--green)}
+.stat-value{font-size:32px;font-weight:700;letter-spacing:-.02em;color:#fff;line-height:1;margin-bottom:6px}
+.stat-label{font-size:12px;color:var(--muted);font-weight:500}
+.stat-trend{margin-top:12px;font-size:11px;font-weight:600;display:flex;align-items:center;gap:5px}
+.stat-trend.up{color:var(--green)}.stat-trend.down{color:var(--red)}.stat-trend svg{width:12px;height:12px}
+.charts-grid{display:grid;grid-template-columns:1.4fr 1fr;gap:20px;margin-bottom:28px}
+.bottom-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px}
+.chart-card{background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:20px;padding:24px;min-width:0;overflow:hidden}
+.chart-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.chart-header h3{font-size:15px;font-weight:700;color:#fff}
+.chart-badge{font-size:11px;padding:3px 10px;border-radius:20px;font-weight:600;background:rgba(245,158,11,.1);color:var(--orange);border:1px solid rgba(245,158,11,.2)}
+.chart-wrap{position:relative;height:260px;width:100%}
+.activity-list{display:flex;flex-direction:column;gap:10px;max-height:340px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.activity-item{display:flex;align-items:center;gap:14px;padding:12px;border-radius:10px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.07)}
+.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.dot.blue{background:var(--blue)}.dot.green{background:var(--green)}.dot.orange{background:var(--orange)}.dot.purple{background:var(--purple)}.dot.teal{background:var(--teal)}
+.activity-text{flex:1;min-width:0}
+.activity-text strong{display:block;font-size:13px;font-weight:600}
+.activity-text small{font-size:11px;color:var(--muted)}
+.activity-time{font-size:11px;color:var(--muted);white-space:nowrap}
+.tbl{width:100%;border-collapse:collapse}
+.tbl th{text-align:left;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;padding:0 0 12px}
+.tbl td{padding:11px 0;font-size:13px;border-top:1px solid rgba(255,255,255,.07)}
+.pill{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700}
+.pill.green{background:rgba(34,197,94,.12);color:var(--green)}.pill.orange{background:rgba(245,158,11,.12);color:var(--orange)}.pill.blue{background:rgba(59,130,246,.12);color:var(--blue)}
+.bar{height:4px;background:rgba(255,255,255,.06);border-radius:2px;overflow:hidden;margin-top:6px;min-width:80px}
+.bar i{display:block;height:100%;border-radius:2px;background:linear-gradient(90deg,var(--blue),var(--purple))}
+.note{font-size:11px;color:#555;text-align:center;padding:8px 0 24px}
+.reveal{opacity:0;transform:translate3d(0,14px,0);animation:fadeUp .8s var(--ease) forwards}
+.overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:150}
+@media(max-width:1280px){.stat-grid{grid-template-columns:repeat(2,1fr)}.feature-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:1024px){.charts-grid,.bottom-grid{grid-template-columns:1fr}.hero{grid-template-columns:1fr}}
+@media(max-width:768px){.sidebar{transform:translateX(-100%)}.sidebar.open{transform:translateX(0)}.main{margin-left:0}.topbar{left:0}.hamburger{display:flex}.content{padding:20px 16px}.hero{padding:24px 20px}}
+@media(max-width:480px){.stat-grid,.feature-grid{grid-template-columns:1fr}.page-header h1{font-size:24px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;animation-delay:0s!important}}
+
+.reveal{opacity:1!important;transform:none!important;animation:none!important}
+</style>
+</head>
+<body>
+
+
+<!-- ═════════ HALAMAN ADMIN ═════════ -->
+<div id="app" class="show">
+
+  
+
+  <main class="main">
+    <div class="content">
+      <div class="page-header reveal" style="animation-delay:.05s">
+        <h1>Dashboard Admin</h1>
+        <p id="welcomeMsg">Memuat data...</p>
+      </div>
+
+      <section class="hero reveal" style="animation-delay:.15s">
+        <div>
+          <span class="hero-tag">Tentang Platform</span>
+          <h2>Apa itu <em>Lintas Denzipur</em>?</h2>
+          <p>Lintas Denzipur adalah platform terintegrasi yang menghubungkan aplikasi Lintas Benteng dengan kebutuhan operasional Denzipur 14. Seluruh kegiatan, personel, pelaporan, dan dokumentasi dikelola dalam satu tempat sehingga koordinasi lebih cepat, data lebih rapi, dan pemantauan bisa dilakukan secara real-time oleh admin.</p>
+          <p>Login memakai akun Google, akses diatur per peran (admin / user), dan setiap akun baru perlu disetujui admin sebelum bisa masuk.</p>
+        </div>
+        <div class="hero-logos">
+          <img class="l1" src="https://firebasestorage.googleapis.com/v0/b/lintas-benteng.firebasestorage.app/o/assets%2Flintas_new%20(1).png?alt=media&token=7742714a-1063-4ff2-8591-6e0183724931" alt="Lintas Benteng">
+          <span>✕</span>
+          <img class="l2" src="https://firebasestorage.googleapis.com/v0/b/lintas-benteng.firebasestorage.app/o/assets%2Fdenzipur%2014%20logo.png?alt=media&token=dc433442-00dd-40d5-93b1-a2529c9813b0" alt="Denzipur 14">
+        </div>
+      </section>
+
+      <div class="section-title reveal" style="animation-delay:.25s">Fitur Utama</div>
+      <div class="feature-grid">
+        <div class="feature reveal" style="animation-delay:.30s"><div class="ic"><i data-feather="users"></i></div><h4>Manajemen Personel</h4><p>Kelola akun, peran, dan persetujuan akses pengguna.</p></div>
+        <div class="feature reveal" style="animation-delay:.36s"><div class="ic"><i data-feather="activity"></i></div><h4>Kegiatan</h4><p>Penjadwalan dan penugasan kegiatan beserta statusnya.</p></div>
+        <div class="feature reveal" style="animation-delay:.42s"><div class="ic"><i data-feather="map-pin"></i></div><h4>Tracking</h4><p>Pantau pergerakan dan lokasi secara real-time.</p></div>
+        <div class="feature reveal" style="animation-delay:.48s"><div class="ic"><i data-feather="file-text"></i></div><h4>Pelaporan</h4><p>Laporan kegiatan dan dokumentasi tersimpan terpusat.</p></div>
+      </div>
+
+      <div class="section-title reveal" style="animation-delay:.5s">Ringkasan</div>
+      <div class="stat-grid">
+        <div class="stat-card blue reveal" style="animation-delay:.55s"><div class="stat-icon blue"><i data-feather="users"></i></div><div class="stat-value" data-count="128">0</div><div class="stat-label">Total Personel</div><div class="stat-trend up"><i data-feather="trending-up"></i> +12 bulan ini</div></div>
+        <div class="stat-card purple reveal" style="animation-delay:.61s"><div class="stat-icon purple"><i data-feather="activity"></i></div><div class="stat-value" data-count="34">0</div><div class="stat-label">Kegiatan Aktif</div><div class="stat-trend up"><i data-feather="trending-up"></i> +5 minggu ini</div></div>
+        <div class="stat-card teal reveal" style="animation-delay:.67s"><div class="stat-icon teal"><i data-feather="file-text"></i></div><div class="stat-value" data-count="256">0</div><div class="stat-label">Laporan Masuk</div><div class="stat-trend up"><i data-feather="trending-up"></i> +28 bulan ini</div></div>
+        <div class="stat-card green reveal" style="animation-delay:.73s"><div class="stat-icon green"><i data-feather="radio"></i></div><div class="stat-value" data-count="9">0</div><div class="stat-label">Sedang Live Tracking</div><div class="stat-trend down"><i data-feather="trending-down"></i> -2 dari kemarin</div></div>
+      </div>
+
+      <div class="charts-grid">
+        <div class="chart-card reveal" style="animation-delay:.8s"><div class="chart-header"><h3>Aktivitas Bulanan</h3><span class="chart-badge">Data contoh</span></div><div class="chart-wrap"><canvas id="lineChart"></canvas></div></div>
+        <div class="chart-card reveal" style="animation-delay:.86s"><div class="chart-header"><h3>Status Kegiatan</h3><span class="chart-badge">Data contoh</span></div><div class="chart-wrap"><canvas id="donutChart"></canvas></div></div>
+      </div>
+
+      <div class="bottom-grid">
+        <div class="chart-card reveal" style="animation-delay:.92s">
+          <div class="chart-header"><h3>Aktivitas Terbaru</h3><span class="chart-badge">Data contoh</span></div>
+          <div class="activity-list">
+            <div class="activity-item"><div class="dot blue"></div><div class="activity-text"><strong>User baru mendaftar</strong><small>prajurit.satu@gmail.com</small></div><div class="activity-time">5m lalu</div></div>
+            <div class="activity-item"><div class="dot green"></div><div class="activity-text"><strong>Kegiatan selesai</strong><small>Latihan Lapangan Sektor A</small></div><div class="activity-time">32m lalu</div></div>
+            <div class="activity-item"><div class="dot purple"></div><div class="activity-text"><strong>Dokumentasi diupload</strong><small>12 foto — Apel Pagi</small></div><div class="activity-time">1j lalu</div></div>
+            <div class="activity-item"><div class="dot orange"></div><div class="activity-text"><strong>Laporan menunggu review</strong><small>Laporan Patroli Minggu 3</small></div><div class="activity-time">3j lalu</div></div>
+            <div class="activity-item"><div class="dot teal"></div><div class="activity-text"><strong>Tracking dimulai</strong><small>Tim Bravo — Rute Timur</small></div><div class="activity-time">5j lalu</div></div>
+          </div>
+        </div>
+        <div class="chart-card reveal" style="animation-delay:.98s">
+          <div class="chart-header"><h3>Progres Kegiatan</h3><span class="chart-badge">Data contoh</span></div>
+          <table class="tbl">
+            <thead><tr><th>Kegiatan</th><th>Status</th><th style="width:35%">Progres</th></tr></thead>
+            <tbody>
+              <tr><td>Latihan Lapangan A</td><td><span class="pill green">Selesai</span></td><td><div class="bar"><i style="width:100%"></i></div></td></tr>
+              <tr><td>Patroli Sektor Timur</td><td><span class="pill blue">Berjalan</span></td><td><div class="bar"><i style="width:68%"></i></div></td></tr>
+              <tr><td>Pemeliharaan Alat</td><td><span class="pill blue">Berjalan</span></td><td><div class="bar"><i style="width:45%"></i></div></td></tr>
+              <tr><td>Pelatihan Personel</td><td><span class="pill orange">Terjadwal</span></td><td><div class="bar"><i style="width:10%"></i></div></td></tr>
+              <tr><td>Evaluasi Triwulan</td><td><span class="pill orange">Terjadwal</span></td><td><div class="bar"><i style="width:0%"></i></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="note">Seluruh angka di halaman ini masih data contoh (dummy).</div>
+    </div>
+  </main>
+</div>
+
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+import { getFirestore, doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAlVfejf312G-tIleA8izbxn98bDGe1MvM",
+  authDomain: "lintas-benteng.firebaseapp.com",
+  databaseURL: "https://lintas-benteng-default-rtdb.firebaseio.com",
+  projectId: "lintas-benteng",
+  storageBucket: "lintas-benteng.firebasestorage.app",
+  messagingSenderId: "1005929757785",
+  appId: "1:1005929757785:web:65b6d25b390677a98f0548",
+  measurementId: "G-647RZ20J14"
+};
+const COLLECTION = 'lintas';
+const OWNER_EMAILS = ['sutannadhif@gmail.com'];
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const $ = (id) => document.getElementById(id);
+
+onAuthStateChanged(auth, async (user) => {
+  if (!user) { top.location.href = 'admin.html'; return; }
+  let data = { displayName: user.displayName };
+  if (!OWNER_EMAILS.includes(user.email)) {
+    const snap = await getDoc(doc(db, COLLECTION, user.uid));
+    data = snap.exists() ? snap.data() : null;
+    if (!data || data.role !== 'admin' || data.status !== 'active') { top.location.href = 'admin.html'; return; }
+  }
+  const h = new Date().getHours();
+  const greet = h < 11 ? 'Selamat Pagi' : h < 15 ? 'Selamat Siang' : h < 19 ? 'Selamat Sore' : 'Selamat Malam';
+  $('welcomeMsg').textContent = `${greet}, ${data.displayName || user.email} — selamat datang di panel admin.`;
+  feather.replace();
+  initCharts();
+  countUp();
+  window.__ready && window.__ready();
+});
+
+function countUp() {
+  document.querySelectorAll('[data-count]').forEach(el => {
+    const target = +el.dataset.count, dur = 500, t0 = performance.now();
+    const step = (t) => {
+      const p = Math.min((t - t0) / dur, 1);
+      el.textContent = Math.round(target * (1 - Math.pow(1 - p, 3)));
+      if (p < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+function initCharts() {
+  const css = getComputedStyle(document.documentElement);
+  const light = document.documentElement.dataset.theme === 'light';
+  const bg = css.getPropertyValue('--bg').trim() || '#0a0a0a';
+  const muted = css.getPropertyValue('--muted').trim() || '#a0a0a0';
+  const grid = light ? 'rgba(15,23,42,0.08)' : 'rgba(255,255,255,0.05)';
+  const tooltip = light
+    ? { backgroundColor:'#fff', titleColor:'#0f172a', bodyColor:'#475569', borderColor:'rgba(15,23,42,0.15)', borderWidth:1, padding:12 }
+    : { backgroundColor:'rgba(0,0,0,0.8)', titleColor:'#fff', bodyColor:'#a0a0a0', borderColor:'rgba(255,255,255,0.1)', borderWidth:1, padding:12 };
+  const axis = { grid:{ color:grid }, ticks:{ color:muted, font:{ family:'Inter', size:11 } }, border:{ color:'transparent' } };
+  const legend = { position:'bottom', labels:{ color:muted, usePointStyle:true, pointStyle:'circle', boxWidth:8, padding:12, font:{ family:'Inter', size:11 } } };
+
+  new Chart($('lineChart'), {
+    type:'line',
+    data:{
+      labels:['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'],
+      datasets:[
+        { label:'Kegiatan', data:[12,19,15,25,22,30,28,35,32,40,38,45], borderColor:'#3b82f6', backgroundColor:'rgba(59,130,246,0.08)', tension:.45, fill:true, borderWidth:2.5, pointRadius:3, pointHoverRadius:6, pointBackgroundColor:'#3b82f6', pointBorderColor:bg },
+        { label:'Laporan',  data:[8,14,10,18,20,24,22,28,30,33,35,40],  borderColor:'#8b5cf6', backgroundColor:'rgba(139,92,246,0.06)', tension:.45, fill:true, borderWidth:2.5, pointRadius:3, pointHoverRadius:6, pointBackgroundColor:'#8b5cf6', pointBorderColor:bg }
+      ]
+    },
+    options:{ animation:false, responsive:true, maintainAspectRatio:false, plugins:{ legend, tooltip }, scales:{ x:axis, y:{ ...axis, beginAtZero:true } } }
+  });
+
+  new Chart($('donutChart'), {
+    type:'doughnut',
+    data:{
+      labels:['Selesai','Berjalan','Terjadwal','Ditunda'],
+      datasets:[{ data:[48,22,18,6], backgroundColor:['rgba(34,197,94,0.85)','rgba(59,130,246,0.85)','rgba(245,158,11,0.85)','rgba(239,83,80,0.85)'], borderColor:bg, borderWidth:3, hoverOffset:8 }]
+    },
+    options:{ animation:false, responsive:true, maintainAspectRatio:false, cutout:'70%', plugins:{ legend, tooltip } }
+  });
+}
+</script>
+</body>
+</html>

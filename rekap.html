@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>if (top === self) location.replace('admin.html#rekap');</script>
+<title>Rekap Data</title>
+<link rel="stylesheet" href="page-base.css">
+<link rel="stylesheet" href="theme-light.css">
+<script src="theme.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<div class="toast" id="toast"></div>
+<script type="module">
+import { guard, listen, $, esc } from './common.js';
+guard(() => {
+  $('root').innerHTML = `
+    <div class="page-header"><h1>Rekap Data</h1><p>Ringkasan kegiatan, tracking, dan dokumentasi.</p></div>
+    <div class="stat-grid" id="stats"></div>
+    <div class="panel"><h3 style="margin-bottom:14px">Kegiatan per Bulan</h3><div id="months"></div></div>`;
+  const n = { kegiatan: [], tracking: 0, dok: 0 };
+  const draw = () => {
+    const k = n.kegiatan, cnt = (s) => k.filter(x => x.status === s).length;
+    const card = (v, l) => `<div class="stat-card"><div class="stat-value">${v}</div><div class="stat-label">${l}</div></div>`;
+    $('stats').innerHTML = card(k.length, 'Total Kegiatan') + card(cnt('Rencana'), 'Rencana') + card(cnt('Berjalan'), 'Berjalan') + card(cnt('Selesai'), 'Selesai') + card(n.tracking, 'Titik Tracking') + card(n.dok, 'Dokumentasi');
+    const m = {};
+    k.forEach(x => { const key = (x.tanggal || '').slice(0, 7) || '-'; m[key] = (m[key] || 0) + 1; });
+    const max = Math.max(1, ...Object.values(m));
+    $('months').innerHTML = Object.keys(m).sort().reverse().map(key =>
+      `<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;font-size:13px"><span style="width:80px;color:var(--muted)">${esc(key)}</span><div class="bar" style="width:${m[key] / max * 100}%"></div><b>${m[key]}</b></div>`).join('')
+      || '<div class="empty">Belum ada data.</div>';
+  };
+  listen('lintas_kegiatan', (r) => { n.kegiatan = r; draw(); });
+  listen('lintas_tracking', (r) => { n.tracking = r.length; draw(); });
+  listen('lintas_dokumentasi', (r) => { n.dok = r.length; draw(); });
+});
+</script>
+</body>
+</html>

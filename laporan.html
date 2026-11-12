@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>if (top === self) location.replace('admin.html#laporan');</script>
+<title>Laporan Kegiatan</title>
+<link rel="stylesheet" href="page-base.css">
+<link rel="stylesheet" href="theme-light.css">
+<script src="theme.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<div class="toast" id="toast"></div>
+<script type="module">
+import { guard, listen, $, esc } from './common.js';
+guard(() => {
+  $('root').innerHTML = `
+    <div class="page-header"><h1>Laporan Kegiatan</h1><p>Filter per bulan, unduh CSV, atau cetak.</p></div>
+    <div class="panel">
+      <div class="form" style="margin-bottom:16px">
+        <label>Bulan<input type="month" id="m"></label>
+        <div class="acts"><button class="btn ok" id="csv">Unduh CSV</button><button class="btn" onclick="print()">Cetak</button></div>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Tanggal</th><th>Pelapor</th><th>Kegiatan</th><th>Lokasi</th><th>Foto</th><th>Peta</th><th>Status</th><th>Catatan</th></tr></thead>
+        <tbody id="rows"></tbody></table></div>
+    </div>`;
+  let all = [];
+  const cur = () => all.filter(r => !$('m').value || (r.tanggal || '').startsWith($('m').value));
+  const safeUrl = (u) => (typeof u === 'string' && u.startsWith('https://')) ? u : '';
+  const draw = () => {
+    $('rows').innerHTML = cur().map(r => {
+      const foto = safeUrl(r.fotoUrl);
+      const peta = (r.lat != null && r.lng != null)
+        ? `https://www.google.com/maps?q=${encodeURIComponent(r.lat)},${encodeURIComponent(r.lng)}` : '';
+      return `<tr>
+        <td>${esc(r.tanggal)}</td>
+        <td>${esc(r.userName || '-')}</td>
+        <td>${esc(r.judul)}</td>
+        <td>${esc(r.lokasi)}${r.alamat ? `<br><small style="color:var(--muted)">${esc(r.alamat)}</small>` : ''}</td>
+        <td>${foto ? `<a href="${esc(foto)}" target="_blank" rel="noopener"><img src="${esc(foto)}" alt="foto" style="width:64px;height:64px;object-fit:cover;border-radius:6px"></a>` : '-'}</td>
+        <td>${peta ? `<a href="${peta}" target="_blank" rel="noopener">Buka</a>` : '-'}</td>
+        <td>${esc(r.status)}</td>
+        <td>${esc(r.catatan)}</td></tr>`;
+    }).join('') || '<tr><td colspan="8" class="empty">Tidak ada data.</td></tr>';
+  };
+  $('m').oninput = draw;
+  $('csv').onclick = () => {
+    const q = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`;
+    const csv = [['Tanggal', 'Pelapor', 'Kegiatan', 'Lokasi', 'Alamat', 'Lat', 'Lng', 'Foto', 'Status', 'Catatan'],
+      ...cur().map(r => [r.tanggal, r.userName, r.judul, r.lokasi, r.alamat, r.lat, r.lng, r.fotoUrl, r.status, r.catatan])]
+      .map(r => r.map(q).join(',')).join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv' }));
+    a.download = 'laporan-kegiatan.csv'; a.click();
+  };
+  listen('lintas_kegiatan', (r) => { all = r.sort((a, b) => (b.tanggal || '').localeCompare(a.tanggal || '')); draw(); });
+});
+</script>
+</body>
+</html>

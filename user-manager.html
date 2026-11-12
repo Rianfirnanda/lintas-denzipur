@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>if (top === self) location.replace('admin.html#user-manager');</script>
+<title>Manajemen User Denzipur</title>
+<link rel="stylesheet" href="page-base.css">
+<link rel="stylesheet" href="theme-light.css">
+<script src="theme.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<div class="toast" id="toast"></div>
+<script type="module">
+import { guard, $, esc, fmt, toast, db, F, OWNER_EMAILS } from './common.js';
+
+const USERS_COL = 'users';          // koleksi user Lintas
+const ROLE = 'user-denzipur';       // cuma role ini yang ditampilkan
+
+guard((me) => {
+  $('root').innerHTML = `
+    <div class="page-header"><h1>Manajemen User Denzipur</h1><p>Akun role <b>${ROLE}</b>: setujui, blokir, atau hapus.</p></div>
+    <div class="panel">
+      <div class="form" style="margin-bottom:16px">
+        <label>Cari<input id="q" placeholder="Nama atau email..."></label>
+        <label>Status<select id="st"><option value="">Semua</option><option>pending</option><option>active</option><option>blocked</option></select></label>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Akun</th><th>Status</th><th>Terakhir Login</th><th>Aksi</th></tr></thead>
+        <tbody id="rows"></tbody></table></div>
+    </div>`;
+
+  let all = [];
+  const nameOf = u => u.displayName || u.nama || u.name || '';
+
+  const draw = () => {
+    const q = $('q').value.trim().toLowerCase(), st = $('st').value;
+    const list = all.filter(u => !OWNER_EMAILS.includes(u.email)
+      && (!st || (u.status || 'pending') === st)
+      && (!q || (u.email || '').toLowerCase().includes(q) || nameOf(u).toLowerCase().includes(q)))
+      .sort((a, b) => (b.lastLogin?.seconds || 0) - (a.lastLogin?.seconds || 0));
+
+    $('rows').innerHTML = list.map(u => {
+      const s = u.status || 'pending';
+      const btn = (a, c, t) => `<button class="btn ${c}" data-a="${a}" data-id="${u.id}">${t}</button>`;
+      return `<tr>
+        <td><b>${esc(nameOf(u) || '(tanpa nama)')}</b><br><small style="color:var(--muted)">${esc(u.email)}</small></td>
+        <td><span class="pill ${s}">${s === 'active' ? 'Aktif' : s === 'blocked' ? 'Diblokir' : 'Pending'}</span></td>
+        <td style="color:var(--muted)">${fmt(u.lastLogin)}</td>
+        <td><div class="acts">
+          ${s !== 'active' ? btn('approve', 'ok', s === 'blocked' ? 'Buka Blokir' : 'Setujui') : ''}
+          ${s !== 'blocked' ? btn('block', 'wn', 'Blokir') : ''}
+          ${btn('delete', 'dg', 'Hapus')}</div></td></tr>`;
+    }).join('') || '<tr><td colspan="4" class="empty">Tidak ada user Denzipur.</td></tr>';
+  };
+
+  $('q').oninput = draw; $('st').onchange = draw;
+
+  $('rows').onclick = async (e) => {
+    const b = e.target.closest('button[data-a]'); if (!b) return;
+    const u = all.find(x => x.id === b.dataset.id);
+    if (!u || u.id === me.uid || OWNER_EMAILS.includes(u.email)) return toast('Akun ini tidak bisa diubah.', 'err');
+    const ref = F.doc(db, USERS_COL, u.id);
+    try {
+      if (b.dataset.a === 'delete') { if (!confirm('Hapus ' + u.email + '?')) return; await F.deleteDoc(ref); }
+      else if (b.dataset.a === 'block') { if (!confirm('Blokir ' + u.email + '?')) return; await F.updateDoc(ref, { status: 'blocked' }); }
+      else await F.updateDoc(ref, { status: 'active' });
+      toast('Berhasil.');
+    } catch (err) { toast('Gagal: ' + (err.code || err.message), 'err'); }
+  };
+
+  // Listener di-filter di server: cuma doc role user-denzipur
+  const qy = F.query(F.collection(db, USERS_COL), F.where('role', '==', ROLE));
+  F.onSnapshot(qy,
+    snap => { all = snap.docs.map(d => ({ id: d.id, ...d.data() })); draw(); },
+    err => toast('Gagal load: ' + (err.code || err.message), 'err'));
+});
+</script>
+</body>
+</html>
