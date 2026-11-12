@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>if (top === self) location.replace('admin.html#user-manager');</script>
+<title>Personel & Akses</title>
+<link rel="stylesheet" href="page-base.css">
+<link rel="stylesheet" href="theme-light.css">
+<script src="theme.js"></script>
+<style>.scope{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:4px;max-height:160px;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:8px}
+.scope label{flex-direction:row!important;gap:6px;align-items:center;font-weight:500!important;color:var(--text)!important}.scope input{width:auto}</style>
+</head>
+<body>
+<div class="page-header"><h1>Personel &amp; Akses</h1><p>Profil organisasi (nama, pangkat, jabatan, unit) dipisahkan dari izin aplikasi (peran, status akun, lingkup unit). Perubahan akses diproses server dan tercatat di log audit.</p></div>
+
+<div class="panel" id="invPanel" hidden>
+  <h2>Undang akun</h2>
+  <form id="inv" class="form">
+    <label>Email Google<input name="email" type="email" required placeholder="nama@gmail.com"></label>
+    <label>Peran<select name="role"></select></label>
+    <label>Unit (anggota)<select name="unitId"></select></label>
+    <label>Lingkup unit (staf)<select name="scope" multiple size="3"></select></label>
+    <div class="acts"><button class="btn ok" type="submit">Simpan undangan</button></div>
+  </form>
+  <p class="muted" style="font-size:12px;margin-top:8px">Akun yang diundang langsung aktif saat login pertama dengan email Google terverifikasi tersebut. Tanpa undangan, akun baru berstatus <b>Menunggu Persetujuan</b>.</p>
+  <div id="invList" class="acts" style="margin-top:10px"></div>
+</div>
+
+<div class="panel">
+  <div class="tabs" id="tabs" role="tablist">
+    <button class="tab" role="tab" aria-selected="true" data-f="pending">Menunggu</button>
+    <button class="tab" role="tab" aria-selected="false" data-f="active">Aktif</button>
+    <button class="tab" role="tab" aria-selected="false" data-f="blocked">Diblokir</button>
+    <button class="tab" role="tab" aria-selected="false" data-f="">Semua</button>
+  </div>
+  <div class="form" style="margin-bottom:12px"><label>Cari<input id="q" type="search" placeholder="Nama, email, pangkat, jabatan"></label><label>Unit<select id="fUnit"></select></label><label>Peran<select id="fRole"><option value="">Semua peran</option></select></label></div>
+  <div id="state"></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Personel</th><th>Pangkat / Jabatan</th><th>Unit</th><th>Peran</th><th>Status akun</th><th>Aksi</th></tr></thead>
+    <tbody id="rows"></tbody></table></div>
+</div>
+
+<dialog id="accDlg"><form id="accF" method="dialog" class="form">
+  <h2 class="wide">Ubah akses — <span id="accWho"></span></h2>
+  <label>Peran<select name="role"></select></label>
+  <label>Status akun<select name="status"><option value="pending">Menunggu Persetujuan</option><option value="active">Aktif</option><option value="blocked">Diblokir</option></select></label>
+  <label class="wide">Unit keanggotaan<select name="unitId"></select></label>
+  <div class="wide"><div class="muted" style="font-size:12px;font-weight:600;margin-bottom:6px">Lingkup unit (untuk Operator / Pemeriksa / Pembaca)</div><div class="scope" id="scopeBox"></div></div>
+  <p class="wide muted" style="font-size:12px">Pangkat dan jabatan tidak memberi izin otomatis. Memblokir akun langsung menutup sesi tracking aktifnya.</p>
+  <div class="wide acts" style="justify-content:flex-end"><button class="btn" value="cancel" formnovalidate>Batal</button><button class="btn primary" value="ok">Simpan</button></div>
+  <div class="wide state state-err" id="accErr" hidden></div>
+</form></dialog>
+
+<dialog id="profDlg"><form id="profF" method="dialog" class="form">
+  <h2 class="wide">Profil personel</h2>
+  <label class="wide">Nama<input name="nama" required minlength="2" maxlength="120"></label>
+  <label>Pangkat<input name="pangkat" maxlength="60"></label>
+  <label>Jabatan<input name="jabatan" maxlength="120"></label>
+  <label>Status keanggotaan<select name="statusKeanggotaan"><option value="aktif">Aktif</option><option value="nonaktif">Nonaktif</option><option value="mutasi">Mutasi</option><option value="pensiun">Pensiun</option></select></label>
+  <div class="wide acts" style="justify-content:flex-end"><button class="btn" value="cancel" formnovalidate>Batal</button><button class="btn primary" value="ok">Simpan</button></div>
+  <div class="wide state state-err" id="profErr" hidden></div>
+</form></dialog>
+<div class="toast" id="toast"></div>
+<script type="module">
+import { guard, $, esc, F, db, call, toast, chip, LABEL, errText, ready, scoped, unitOptions, loadUnits, stateBox, createListenerScope } from './common.js';
+
+guard(async (ctx) => {
+  const units = (await loadUnits()).filter((u) => !ctx.scope || ctx.scope.includes(u.id));
+  const uName = (id) => units.find((u) => u.id === id)?.nama || (id ? id : '—');
+  const roleOpts = Object.entries(LABEL.role).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
+  $('fUnit').innerHTML = await unitOptions(ctx); $('fRole').innerHTML += roleOpts;
+  $('invPanel').hidden = !ctx.isSys;
+  const subs = createListenerScope();
+  let akses = new Map(), personel = new Map(), filter = ctx.isSys ? 'pending' : 'active', editing = null;
+  if (!ctx.isSys) document.querySelectorAll('.tab').forEach((t) => t.setAttribute('aria-selected', String(t.dataset.f === 'active')));
+
+  function subscribe() {
+    subs.clear(); stateBox($('state'), 'loading', 'Memuat personel…');
+    const fail = (e) => { stateBox($('state'), 'err', 'Gagal memuat: ' + errText(e), subscribe); ready(); };
+    subs.add(F.onSnapshot(F.query(scoped(F.collection(db, 'akses'), ctx), F.limit(1000)), (s) => { akses = new Map(s.docs.map((d) => [d.id, d.data()])); $('state').innerHTML = ''; draw(); ready(); }, fail));
+    subs.add(F.onSnapshot(F.query(scoped(F.collection(db, 'personel'), ctx), F.limit(1000)), (s) => { personel = new Map(s.docs.map((d) => [d.id, d.data()])); draw(); }, fail));
+    if (ctx.isSys) subs.add(F.onSnapshot(F.query(F.collection(db, 'undangan'), F.limit(200)), (s) => {
+      $('invList').innerHTML = s.docs.map((d) => `<span class="chip">${esc(d.id)} · ${esc(LABEL.role[d.data().role])} <button class="btn dg" style="padding:1px 6px" data-delinv="${esc(d.id)}" aria-label="Hapus undangan">✕</button></span>`).join('') || '<span class="muted" style="font-size:12px">Tidak ada undangan tertunda.</span>';
+    }, () => {}));
+  }
+  function draw() {
+    const q = $('q').value.trim().toLowerCase(), fu = $('fUnit').value, fr = $('fRole').value;
+    const ids = new Set([...akses.keys(), ...personel.keys()]);
+    const list = [...ids].map((id) => ({ id, a: akses.get(id) || {}, p: personel.get(id) || {} }))
+      .filter(({ a, p }) => (!filter || a.status === filter) && (!fr || a.role === fr) && (!fu || (a.unitId || p.unitId) === fu))
+      .filter(({ a, p }) => !q || [p.nama, a.email, p.email, p.pangkat, p.jabatan].join(' ').toLowerCase().includes(q))
+      .sort((x, y) => (x.p.nama || x.a.email || '').localeCompare(y.p.nama || y.a.email || ''));
+    $('rows').innerHTML = list.map(({ id, a, p }) => {
+      const self = id === ctx.uid;
+      const acts = [
+        (ctx.isSys || ctx.akses.role === 'operator') && personel.has(id) ? `<button class="btn" data-prof="${esc(id)}">Profil</button>` : '',
+        ctx.isSys && !self ? `<button class="btn pr" data-acc="${esc(id)}">Akses</button>` : '',
+        ctx.isSys && !self && a.status === 'pending' ? `<button class="btn ok" data-acc="${esc(id)}" data-quick="1">Setujui…</button>` : '',
+        ctx.isSys && !self && a.status !== 'blocked' && a.status ? `<button class="btn wn" data-block="${esc(id)}">Blokir</button>` : '',
+        ctx.isSys && !self && a.role !== 'sysadmin' ? `<button class="btn dg" data-del="${esc(id)}">Hapus</button>` : '',
+        self ? '<span class="muted" style="font-size:12px">Akun Anda</span>' : '',
+      ].join('');
+      return `<tr><td><b>${esc(p.nama || '(tanpa nama)')}</b><br><small class="muted">${esc(a.email || p.email || '')}</small></td>
+        <td>${esc(p.pangkat || '–')}<br><small class="muted">${esc(p.jabatan || '')}${p.statusKeanggotaan && p.statusKeanggotaan !== 'aktif' ? ' · ' + esc(p.statusKeanggotaan) : ''}</small></td>
+        <td>${esc(uName(a.unitId || p.unitId))}${(a.unitScope || []).length ? `<br><small class="muted">lingkup: ${esc(a.unitScope.map(uName).join(', '))}</small>` : ''}</td>
+        <td>${esc(LABEL.role[a.role] || '–')}</td><td>${a.status ? chip('akun', a.status) : '–'}</td><td><div class="acts">${acts}</div></td></tr>`;
+    }).join('') || '<tr><td colspan="6" class="empty">Tidak ada personel pada filter ini.</td></tr>';
+  }
+
+  function openAcc(id, quick) {
+    editing = id; const a = akses.get(id) || {}, f = $('accF');
+    $('accWho').textContent = personel.get(id)?.nama || a.email || id;
+    f.role.innerHTML = roleOpts; f.role.value = a.role || 'anggota';
+    f.status.value = quick ? 'active' : a.status || 'pending';
+    f.unitId.innerHTML = '<option value="">— belum ditetapkan —</option>' + units.map((u) => `<option value="${esc(u.id)}">${esc(u.nama)}</option>`).join('');
+    f.unitId.value = a.unitId || '';
+    $('scopeBox').innerHTML = units.map((u) => `<label><input type="checkbox" value="${esc(u.id)}" ${(a.unitScope || []).includes(u.id) ? 'checked' : ''}> ${esc(u.nama)}</label>`).join('') || '<span class="muted">Belum ada unit. Tambahkan di menu Unit.</span>';
+    $('accErr').hidden = true; $('accDlg').showModal();
+  }
+  $('accF').addEventListener('submit', async (e) => {
+    if (e.submitter?.value !== 'ok') return; e.preventDefault();
+    const f = e.target, unitScope = [...$('scopeBox').querySelectorAll('input:checked')].map((x) => x.value);
+    const body = { uid: editing, role: f.role.value, status: f.status.value, unitId: f.unitId.value || null, unitScope };
+    const err = (t) => { $('accErr').textContent = t; $('accErr').hidden = false; };
+    if (body.status === 'active' && body.role === 'anggota' && !body.unitId) return err('Anggota aktif wajib memiliki unit.');
+    if (body.status === 'active' && ['operator', 'pemeriksa', 'pembaca'].includes(body.role) && !unitScope.length) return err('Pilih minimal satu unit lingkup.');
+    if (body.role === 'sysadmin' && !confirm('Jadikan akun ini Administrator Sistem? Ia dapat mengelola semua unit dan akun.')) return;
+    try { await call('dzSetAccess', body); $('accDlg').close(); toast('Akses diperbarui.'); } catch (x) { err('Gagal: ' + errText(x)); }
+  });
+
+  function openProf(id) {
+    editing = id; const p = personel.get(id) || {}, f = $('profF');
+    f.nama.value = p.nama || ''; f.pangkat.value = p.pangkat || ''; f.jabatan.value = p.jabatan || ''; f.statusKeanggotaan.value = p.statusKeanggotaan || 'aktif';
+    $('profErr').hidden = true; $('profDlg').showModal();
+  }
+  $('profF').addEventListener('submit', async (e) => {
+    if (e.submitter?.value !== 'ok') return; e.preventDefault();
+    const f = e.target;
+    try { await call('dzSavePersonel', { uid: editing, nama: f.nama.value, pangkat: f.pangkat.value, jabatan: f.jabatan.value, statusKeanggotaan: f.statusKeanggotaan.value }); $('profDlg').close(); toast('Profil disimpan.'); }
+    catch (x) { $('profErr').textContent = 'Gagal: ' + errText(x); $('profErr').hidden = false; }
+  });
+
+  $('rows').onclick = async (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.acc) return openAcc(b.dataset.acc, !!b.dataset.quick);
+    if (b.dataset.prof) return openProf(b.dataset.prof);
+    const id = b.dataset.block || b.dataset.del, a = akses.get(id) || {};
+    const who = personel.get(id)?.nama || a.email;
+    try {
+      if (b.dataset.block && confirm(`Blokir ${who}? Sesi tracking aktifnya akan ditutup.`)) { await call('dzSetAccess', { uid: id, role: a.role, status: 'blocked', unitId: a.unitId || null, unitScope: a.unitScope || [] }); toast('Akun diblokir.'); }
+      if (b.dataset.del && confirm(`Hapus ${who} dari Lintas Denzipur? Akun Google/Lintas Benteng tidak dihapus; jika login lagi akan terdaftar ulang sebagai Menunggu.`)) { await call('dzDeleteAccount', { uid: id }); toast('Akun dihapus dari Denzipur.'); }
+    } catch (x) { toast('Gagal: ' + errText(x), 'err'); }
+  };
+
+  if (ctx.isSys) {
+    const f = $('inv');
+    f.role.innerHTML = roleOpts; f.role.value = 'anggota';
+    f.unitId.innerHTML = '<option value="">—</option>' + units.map((u) => `<option value="${esc(u.id)}">${esc(u.nama)}</option>`).join('');
+    f.scope.innerHTML = units.map((u) => `<option value="${esc(u.id)}">${esc(u.nama)}</option>`).join('');
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      const email = f.email.value.trim().toLowerCase(), role = f.role.value, unitScope = [...f.scope.selectedOptions].map((o) => o.value);
+      if (role === 'anggota' && !f.unitId.value) return toast('Anggota wajib memiliki unit.', 'err');
+      if (['operator', 'pemeriksa', 'pembaca'].includes(role) && !unitScope.length) return toast('Pilih lingkup unit untuk peran staf.', 'err');
+      try { await F.setDoc(F.doc(db, 'undangan', email), { email, role, unitId: f.unitId.value || null, unitScope, createdBy: ctx.uid, createdAt: F.serverTimestamp() }); toast('Undangan disimpan.'); f.reset(); f.role.value = 'anggota'; }
+      catch (x) { toast('Gagal: ' + errText(x), 'err'); }
+    };
+    $('invList').onclick = async (e) => { const b = e.target.closest('[data-delinv]'); if (b && confirm('Hapus undangan ' + b.dataset.delinv + '?')) await F.deleteDoc(F.doc(db, 'undangan', b.dataset.delinv)).catch((x) => toast(errText(x), 'err')); };
+  }
+  $('tabs').onclick = (e) => { const t = e.target.closest('.tab'); if (!t) return; document.querySelectorAll('.tab').forEach((x) => x.setAttribute('aria-selected', String(x === t))); filter = t.dataset.f; draw(); };
+  $('q').oninput = draw; $('fUnit').onchange = draw; $('fRole').onchange = draw;
+  addEventListener('pagehide', () => subs.clear());
+  subscribe();
+}, { roles: ['sysadmin', 'operator'] });
+</script>
+</body>
+</html>

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>if (top === self) location.replace('admin.html#dokumentasi');</script>
+<title>Dokumentasi</title>
+<link rel="stylesheet" href="page-base.css">
+<link rel="stylesheet" href="theme-light.css">
+<script src="theme.js"></script>
+<style>
+.gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px}
+.card{border:1px solid rgba(128,128,128,.35);border-radius:10px;overflow:hidden;cursor:pointer;background:rgba(128,128,128,.08);color:inherit;text-align:left;font:inherit;padding:0}
+.card .ph{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;background:rgba(128,128,128,.2)}
+.card .m{padding:8px 10px;font-size:12px;line-height:1.4}.card .m b{display:block;font-size:13px}
+#lb{position:fixed;inset:0;background:rgba(0,0,0,.88);display:none;align-items:center;justify-content:center;z-index:999;padding:16px;flex-direction:column;gap:10px}
+#lb.on{display:flex}#lb img{max-width:100%;max-height:78vh;border-radius:8px}#lb .cap{color:#fff;text-align:center;font-size:13px;max-width:700px}
+</style>
+</head>
+<body>
+<div class="page-header"><h1>Dokumentasi</h1><p>Foto dokumentasi dari laporan, mengikuti lingkup akses laporan. Foto dibuka dengan autentikasi, tanpa tautan publik.</p></div>
+<div class="panel"><div class="form">
+  <label>Unit<select id="fUnit"></select></label>
+  <label>Dari<input type="date" id="d1"></label><label>Sampai<input type="date" id="d2"></label>
+  <label>Cari<input id="q" type="search" placeholder="Judul / kegiatan"></label>
+  <label>&nbsp;<button class="btn ok" id="ref">Tampilkan</button></label>
+</div></div>
+<div class="panel"><div id="info" class="muted" style="margin-bottom:10px;font-size:13px"></div><div id="state"></div><div class="gal" id="gal"></div></div>
+<div id="lb" role="dialog" aria-label="Pratinjau foto"></div>
+<div class="toast" id="toast"></div>
+<script type="module">
+import { guard, $, esc, F, db, fmtTime, tsMs, errText, ready, scoped, unitOptions, stateBox, LABEL } from './common.js';
+import { storage } from './js/firebase.js';
+import { ref as sRef, getBlob } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js';
+
+guard(async (ctx) => {
+  const iso = (d) => new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  $('d1').value = iso(new Date(Date.now() - 14 * 864e5)); $('d2').value = iso(new Date());
+  $('fUnit').innerHTML = await unitOptions(ctx);
+  let items = [], view = [];
+  const urls = new Map();
+  const io = new IntersectionObserver((ents) => ents.forEach(async (en) => {
+    if (!en.isIntersecting) return; io.unobserve(en.target);
+    const p = en.target.dataset.path;
+    try { if (!urls.has(p)) urls.set(p, URL.createObjectURL(await getBlob(sRef(storage, p)))); en.target.src = urls.get(p); }
+    catch { en.target.alt = 'Foto tidak dapat dimuat'; }
+  }), { rootMargin: '200px' });
+
+  const draw = () => {
+    const q = $('q').value.trim().toLowerCase();
+    view = items.filter((d) => !q || `${d.judul} ${d.kegiatanJudul}`.toLowerCase().includes(q));
+    $('info').textContent = `${view.length} foto`;
+    $('gal').innerHTML = view.map((d, i) => `<button class="card" data-i="${i}"><img class="ph" data-path="${esc(d.path)}" alt="${esc(d.judul)}">
+      <div class="m"><b>${esc(d.judul)}</b>${esc(d.kegiatanJudul || '')}<br><small class="muted">${fmtTime(d.ms)} · ${esc(LABEL.laporan[d.status])}</small></div></button>`).join('')
+      || '<div class="empty">Tidak ada foto di rentang ini.</div>';
+    $('gal').querySelectorAll('img[data-path]').forEach((img) => io.observe(img));
+  };
+  const load = async () => {
+    const a = new Date($('d1').value + 'T00:00:00+07:00'), b = new Date($('d2').value + 'T23:59:59+07:00');
+    if (!(a <= b)) return stateBox($('state'), 'err', 'Rentang tanggal tidak valid.');
+    stateBox($('state'), 'loading', 'Memuat dokumentasi…');
+    try {
+      const s = await F.getDocs(F.query(scoped(F.collection(db, 'laporan'), ctx, 'unitId', $('fUnit').value), F.where('createdAt', '>=', F.Timestamp.fromDate(a)), F.where('createdAt', '<=', F.Timestamp.fromDate(b)), F.orderBy('createdAt', 'desc'), F.limit(200)));
+      items = s.docs.flatMap((d) => (d.data().fotoPaths || []).map((path) => ({ path, id: d.id, ...d.data(), ms: tsMs(d.data().createdAt) })));
+      $('state').innerHTML = s.size >= 200 ? '<div class="state">Dibatasi 200 laporan terbaru; persempit rentang tanggal.</div>' : '';
+      draw();
+    } catch (e) { stateBox($('state'), 'err', 'Gagal memuat: ' + errText(e), load); }
+    ready();
+  };
+  const lb = $('lb');
+  lb.onclick = () => lb.classList.remove('on');
+  addEventListener('keydown', (e) => { if (e.key === 'Escape') lb.classList.remove('on'); });
+  $('gal').onclick = (e) => {
+    const c = e.target.closest('.card'); if (!c) return;
+    const d = view[+c.dataset.i], u = urls.get(d.path);
+    lb.innerHTML = `${u ? `<img src="${u}" alt="">` : '<span class="spin"></span>'}<div class="cap"><b>${esc(d.judul)}</b> · ${esc(d.kegiatanJudul || '')}<br>${esc(d.isi || '')}<br><small>${fmtTime(d.ms)}${d.lokasi ? ` · lokasi laporan ±${Math.round(d.lokasi.acc)} m` : ''}</small></div>`;
+    lb.classList.add('on');
+  };
+  $('ref').onclick = load; $('fUnit').onchange = load; $('q').oninput = draw;
+  load();
+}, { roles: ['sysadmin', 'operator', 'pemeriksa'] });
+</script>
+</body>
+</html>

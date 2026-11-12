@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>if (top === self) location.replace('admin.html#laporan');</script>
+<title>Laporan</title>
+<link rel="stylesheet" href="page-base.css">
+<link rel="stylesheet" href="theme-light.css">
+<script src="theme.js"></script>
+<style>.thumbs{display:flex;gap:8px;flex-wrap:wrap}.thumbs img{width:110px;height:110px;object-fit:cover;border-radius:8px;cursor:zoom-in}
+@media print{.page-header button,.panel:first-of-type,.acts{display:none!important}body{background:#fff;color:#000}}</style>
+</head>
+<body>
+<div class="page-header row"><div class="grow"><h1>Laporan</h1><p>Alur pemeriksaan: Draf → Diajukan → Perlu Revisi → Disetujui. Laporan yang disetujui tidak dapat diubah.</p></div>
+  <div class="acts"><button class="btn ok" id="csv">Ekspor CSV</button><button class="btn" onclick="print()">Cetak</button></div></div>
+<div class="panel"><div class="form">
+  <label>Unit<select id="fUnit"></select></label>
+  <label>Status<select id="fSt"><option value="">Semua status</option><option value="diajukan" selected>Diajukan (menunggu)</option><option value="perlu_revisi">Perlu Revisi</option><option value="disetujui">Disetujui</option><option value="draf">Draf</option></select></label>
+  <label>Dari<input type="date" id="fFrom"></label>
+  <label>Sampai<input type="date" id="fTo"></label>
+  <label>Kegiatan<select id="fKeg"><option value="">Semua kegiatan</option></select></label>
+  <label>Personel<input id="fQ" type="search" placeholder="Nama pelapor / judul"></label>
+</div></div>
+<div class="panel"><div id="state"></div><div class="table-wrap"><table>
+  <thead><tr><th>Dibuat (WIB)</th><th>Pelapor</th><th>Laporan</th><th>Kegiatan</th><th>Status</th><th>Pemeriksaan</th><th>Aksi</th></tr></thead>
+  <tbody id="rows"></tbody></table></div>
+  <div class="acts" style="margin-top:10px"><button class="btn" id="more" hidden>Muat lebih banyak</button></div></div>
+
+<dialog id="dlg"><div id="detail"></div>
+  <form method="dialog" id="rf" class="form" style="margin-top:14px">
+    <label class="wide" id="catLbl">Catatan pemeriksa<textarea name="catatan" rows="3" maxlength="2000" placeholder="Wajib diisi untuk Perlu Revisi"></textarea></label>
+    <div class="wide acts" style="justify-content:flex-end">
+      <button class="btn" value="cancel" formnovalidate>Tutup</button>
+      <button class="btn wn" value="perlu_revisi" id="bRev">↺ Minta Revisi</button>
+      <button class="btn ok" value="disetujui" id="bOk">✔ Setujui</button>
+    </div>
+    <div class="wide state state-err" id="rErr" hidden></div>
+  </form></dialog>
+<div class="toast" id="toast"></div>
+<script type="module">
+import { guard, $, esc, F, db, call, toast, chip, LABEL, fmtTime, tsMs, errText, ready, scoped, unitOptions, stateBox, createListenerScope, downloadCsv, DZ } from './common.js';
+import { storage } from './js/firebase.js';
+import { ref as sRef, getBlob } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js';
+
+guard(async (ctx) => {
+  const isReviewer = ctx.isSys || ctx.akses.role === 'pemeriksa';
+  $('fUnit').innerHTML = await unitOptions(ctx);
+  const iso = (d) => new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  $('fFrom').value = iso(new Date(Date.now() - 30 * 864e5)); $('fTo').value = iso(new Date());
+  const subs = createListenerScope();
+  const names = new Map();
+  let rows = [], limitN = 100, cur = null;
+
+  async function resolveNames(uids) {
+    const need = [...new Set(uids)].filter((u) => u && !names.has(u));
+    await Promise.all(need.map(async (u) => { try { const s = await F.getDoc(F.doc(db, 'personel', u)); names.set(u, s.exists() ? `${s.data().pangkat || ''} ${s.data().nama || ''}`.trim() : u); } catch { names.set(u, '(tidak dapat dibaca)'); } }));
+  }
+  function subscribe() {
+    subs.clear();
+    stateBox($('state'), 'loading', 'Memuat laporan…');
+    const a = new Date($('fFrom').value + 'T00:00:00+07:00'), b = new Date($('fTo').value + 'T23:59:59+07:00');
+    const qy = F.query(scoped(F.collection(db, 'laporan'), ctx, 'unitId', $('fUnit').value),
+      F.where('createdAt', '>=', F.Timestamp.fromDate(a)), F.where('createdAt', '<=', F.Timestamp.fromDate(b)), F.orderBy('createdAt', 'desc'), F.limit(limitN));
+    subs.add(F.onSnapshot(qy, async (s) => {
+      rows = s.docs.map((d) => ({ id: d.id, ...d.data() }));
+      await resolveNames(rows.flatMap((r) => [r.uid, r.pemeriksaUid]));
+      const km = new Map(rows.map((r) => [r.kegiatanId, r.kegiatanJudul])), kc = $('fKeg').value;
+      $('fKeg').innerHTML = '<option value="">Semua kegiatan</option>' + [...km].map(([i, n]) => `<option value="${esc(i)}">${esc(n || i)}</option>`).join('');
+      if (km.has(kc)) $('fKeg').value = kc;
+      $('more').hidden = s.size < limitN; $('state').innerHTML = ''; draw(); ready();
+      if (cur && $('dlg').open) { const n = rows.find((r) => r.id === cur.id); if (n) openDetail(n); }
+    }, (e) => { stateBox($('state'), 'err', 'Gagal memuat laporan: ' + errText(e), subscribe); ready(); }));
+  }
+  const filtered = () => {
+    const st = $('fSt').value, k = $('fKeg').value, q = $('fQ').value.trim().toLowerCase();
+    return rows.filter((r) => (!st || r.status === st) && (!k || r.kegiatanId === k) && (!q || `${names.get(r.uid)} ${r.judul}`.toLowerCase().includes(q)));
+  };
+  function draw() {
+    $('rows').innerHTML = filtered().map((r) => `<tr>
+      <td>${fmtTime(tsMs(r.createdAt))}${r.diajukanAt ? `<br><small class="muted">diajukan ${fmtTime(tsMs(r.diajukanAt))}</small>` : ''}</td>
+      <td>${esc(names.get(r.uid) || r.uid)}</td>
+      <td><b>${esc(r.judul)}</b><br><small class="muted">${(r.fotoPaths || []).length} foto${r.lokasi ? ' · ada lokasi' : ''}</small></td>
+      <td>${esc(r.kegiatanJudul || '')}</td><td>${chip('laporan', r.status)}</td>
+      <td>${r.pemeriksaUid ? `${esc(names.get(r.pemeriksaUid) || '')}<br><small class="muted">${fmtTime(tsMs(r.diperiksaAt))}</small>` : '<span class="muted">–</span>'}${r.catatanRevisi ? `<br><small>“${esc(r.catatanRevisi)}”</small>` : ''}</td>
+      <td><button class="btn ${isReviewer && r.status === 'diajukan' && r.uid !== ctx.uid ? 'pr' : ''}" data-id="${esc(r.id)}">${isReviewer && r.status === 'diajukan' && r.uid !== ctx.uid ? 'Periksa' : 'Detail'}</button></td></tr>`).join('')
+      || '<tr><td colspan="7" class="empty">Tidak ada laporan pada filter ini.</td></tr>';
+  }
+  async function openDetail(r) {
+    cur = r;
+    const canReview = isReviewer && r.status === 'diajukan' && r.uid !== ctx.uid;
+    $('detail').innerHTML = `<h2>${esc(r.judul)}</h2>
+      <p class="muted" style="font-size:13px">${esc(names.get(r.uid) || '')} · ${esc(r.kegiatanJudul || '')} · ${chip('laporan', r.status)}</p>
+      <p style="white-space:pre-wrap;margin:12px 0;font-size:13.5px">${esc(r.isi || '(tanpa uraian)')}</p>
+      ${r.lokasi ? `<p style="font-size:12.5px">Lokasi laporan: ${(+r.lokasi.lat).toFixed(5)}, ${(+r.lokasi.lng).toFixed(5)} (±${Math.round(r.lokasi.acc)} m, diambil ${fmtTime(r.lokasi.capturedAtMs)})</p>` : '<p class="muted" style="font-size:12.5px">Laporan tanpa lokasi.</p>'}
+      ${r.catatanRevisi ? `<p style="font-size:12.5px">Catatan pemeriksa: ${esc(r.catatanRevisi)}</p>` : ''}
+      <div class="thumbs" id="thumbs">${(r.fotoPaths || []).length ? '<span class="spin"></span>' : '<span class="muted" style="font-size:12.5px">Tanpa foto.</span>'}</div>`;
+    $('catLbl').hidden = $('bRev').hidden = $('bOk').hidden = !canReview;
+    $('rErr').hidden = true; $('rf').catatan.value = '';
+    if (!$('dlg').open) $('dlg').showModal();
+    const th = $('thumbs'); let first = true;
+    for (const p of r.fotoPaths || []) {
+      try {
+        const blob = await getBlob(sRef(storage, p)); // dibaca dengan autentikasi; tanpa tautan publik bertoken
+        if (first) { th.innerHTML = ''; first = false; }
+        const url = URL.createObjectURL(blob), img = new Image(); img.src = url; img.alt = 'Foto dokumentasi'; img.onclick = () => open(url); th.appendChild(img);
+      } catch (e) { th.insertAdjacentHTML('beforeend', `<span class="muted" style="font-size:12px">Foto tidak dapat dimuat (${esc(errText(e))})</span>`); }
+    }
+    if (first && (r.fotoPaths || []).length) th.querySelector('.spin')?.remove();
+  }
+  $('rows').onclick = (e) => { const b = e.target.closest('button[data-id]'); if (b) openDetail(rows.find((r) => r.id === b.dataset.id)); };
+  $('rf').addEventListener('submit', async (e) => {
+    const to = e.submitter?.value; if (!['perlu_revisi', 'disetujui'].includes(to)) return;
+    e.preventDefault();
+    const cat = $('rf').catatan.value.trim();
+    if (to === 'perlu_revisi' && cat.length < 3) { $('rErr').textContent = 'Catatan revisi wajib diisi (min. 3 karakter).'; $('rErr').hidden = false; return; }
+    if (to === 'disetujui' && !confirm('Setujui laporan ini? Laporan yang disetujui tidak dapat diubah lagi.')) return;
+    try {
+      await F.updateDoc(F.doc(db, 'laporan', cur.id), { status: to, catatanRevisi: cat || null, pemeriksaUid: ctx.uid, diperiksaAt: F.serverTimestamp(), updatedAt: F.serverTimestamp() });
+      $('dlg').close(); toast(to === 'disetujui' ? 'Laporan disetujui.' : 'Laporan dikembalikan untuk revisi.');
+    } catch (x) { $('rErr').textContent = 'Gagal: ' + errText(x); $('rErr').hidden = false; }
+  });
+  $('csv').onclick = async () => {
+    const list = filtered();
+    if (!list.length) return toast('Tidak ada data untuk diekspor.', 'err');
+    await call('dzLogAccess', { jenis: 'ekspor_laporan', filter: { unit: $('fUnit').value, status: $('fSt').value, dari: $('fFrom').value, sampai: $('fTo').value, n: list.length } }).catch(() => {});
+    downloadCsv(`laporan-denzipur-${$('fFrom').value}_${$('fTo').value}.csv`, [
+      ['Dibuat (WIB)', 'Pelapor', 'Judul', 'Uraian', 'Kegiatan', 'Unit', 'Status', 'Pemeriksa', 'Diperiksa (WIB)', 'Catatan', 'Lintang', 'Bujur', 'Akurasi (m)', 'Jumlah foto'],
+      ...list.map((r) => [fmtTime(tsMs(r.createdAt)), names.get(r.uid), r.judul, r.isi, r.kegiatanJudul, r.unitId, LABEL.laporan[r.status], names.get(r.pemeriksaUid) || '', r.diperiksaAt ? fmtTime(tsMs(r.diperiksaAt)) : '', r.catatanRevisi || '', r.lokasi?.lat ?? '', r.lokasi?.lng ?? '', r.lokasi?.acc ?? '', (r.fotoPaths || []).length]),
+    ]);
+  };
+  $('fUnit').onchange = $('fFrom').onchange = $('fTo').onchange = () => { limitN = 100; subscribe(); };
+  $('fSt').onchange = $('fKeg').onchange = draw; $('fQ').oninput = draw;
+  $('more').onclick = () => { limitN += 100; subscribe(); };
+  addEventListener('pagehide', () => subs.clear());
+  void DZ;
+  subscribe();
+}, { roles: ['sysadmin', 'operator', 'pemeriksa'] });
+</script>
+</body>
+</html>

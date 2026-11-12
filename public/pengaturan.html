@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>if (top === self) location.replace('admin.html#pengaturan');</script>
+<title>Pengaturan</title>
+<link rel="stylesheet" href="page-base.css">
+<link rel="stylesheet" href="theme-light.css">
+<script src="theme.js"></script>
+</head>
+<body>
+<div class="page-header"><h1>Pengaturan</h1><p>Preferensi tampilan dan parameter sistem tracking.</p></div>
+<div class="panel">
+  <h2>Tema</h2>
+  <div class="acts"><button class="btn" onclick="setTheme('dark')">🌙 Gelap</button><button class="btn" onclick="setTheme('light')">☀️ Terang</button></div>
+</div>
+<div class="panel">
+  <h2>Parameter tracking &amp; data</h2>
+  <p class="muted" style="font-size:12.5px;margin-bottom:12px" id="who"></p>
+  <div id="state"></div>
+  <form id="f" class="form">
+    <label>Ambang “lokasi belum diperbarui” (menit, 1–120)<input name="staleMinutes" type="number" min="1" max="120" required></label>
+    <label>Interval pengambilan titik (detik, 5–300)<input name="captureIntervalSec" type="number" min="5" max="300" required></label>
+    <label>Interval pengiriman (detik, 10–600)<input name="sendIntervalSec" type="number" min="10" max="600" required></label>
+    <label>Batas antrean offline per perangkat (50–2000 titik)<input name="maxQueue" type="number" min="50" max="2000" required></label>
+    <label>Akhiri otomatis sesi tanpa pembaruan (menit, 30–1440)<input name="autoEndMinutes" type="number" min="30" max="1440" required></label>
+    <label>Masa simpan riwayat titik (hari, 7–730)<input name="retentionDays" type="number" min="7" max="730" required></label>
+    <div class="wide acts"><button class="btn primary" id="save" type="submit">Simpan</button><span class="muted" id="upd" style="font-size:12px"></span></div>
+  </form>
+  <p class="muted" style="font-size:12px;margin-top:12px">Interval lebih pendek menambah ketelitian jalur tetapi menambah pemakaian baterai, kuota, dan biaya Firestore. Riwayat titik dihapus otomatis setelah masa simpan; posisi terakhir sesi selesai juga dihapus. Log audit tidak dihapus otomatis.</p>
+</div>
+<div class="toast" id="toast"></div>
+<script type="module">
+import { guard, $, F, db, toast, errText, ready, fmtTime, tsMs, stateBox } from './common.js';
+const DEF = { staleMinutes: 5, captureIntervalSec: 15, sendIntervalSec: 30, maxQueue: 500, autoEndMinutes: 180, retentionDays: 90 };
+guard(async (ctx) => {
+  const f = $('f');
+  $('who').textContent = ctx.isSys ? 'Hanya Administrator Sistem yang dapat mengubah parameter ini.' : 'Hanya baca — perubahan dilakukan Administrator Sistem.';
+  [...f.elements].forEach((el) => (el.disabled = !ctx.isSys));
+  $('save').hidden = !ctx.isSys;
+  try {
+    const s = await F.getDoc(F.doc(db, 'pengaturan', 'umum'));
+    const d = { ...DEF, ...(s.exists() ? s.data() : {}) };
+    Object.keys(DEF).forEach((k) => (f[k].value = d[k]));
+    $('upd').textContent = s.exists() && d.updatedAt ? 'Terakhir diubah ' + fmtTime(tsMs(d.updatedAt)) : 'Memakai nilai bawaan.';
+  } catch (e) { stateBox($('state'), 'err', 'Gagal memuat pengaturan: ' + errText(e), () => location.reload()); }
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(Object.keys(DEF).map((k) => [k, parseInt(f[k].value, 10)]));
+    try { await F.setDoc(F.doc(db, 'pengaturan', 'umum'), { ...data, updatedBy: ctx.uid, updatedAt: F.serverTimestamp() }); toast('Pengaturan disimpan.'); $('upd').textContent = 'Baru saja disimpan.'; }
+    catch (x) { toast('Gagal: ' + errText(x), 'err'); }
+  };
+  ready();
+});
+</script>
+</body>
+</html>

@@ -96,3 +96,16 @@ html[data-theme="light"] .pill.green{color:#15803d}
 html[data-theme="light"] .pill.blocked{color:#dc2626}
 html[data-theme="light"] .pill.blue{color:#2563eb}
 html[data-theme="light"] .chart-badge{color:#b45309}
+/* komponen baru (Personel, Tracking, Laporan, Aplikasi Anggota) */
+html[data-theme="light"] dialog{background:#fff;color:var(--text);border-color:var(--border)}
+html[data-theme="light"] .panel h2,html[data-theme="light"] .page-header h1{color:#0f172a}
+html[data-theme="light"] .item{border-color:var(--border)}
+html[data-theme="light"] .state{border-color:var(--border)}
+html[data-theme="light"] td{border-top-color:rgba(15,23,42,.08)}
+html[data-theme="light"] header.top{background:var(--bg)}
+html[data-theme="light"] .btn.primary{background:#2563eb!important;color:#fff!important;border-color:#2563eb!important}
+html[data-theme="light"] .btn.start{background:#15803d!important;color:#fff!important}
+html[data-theme="light"] .btn.stop{background:#b91c1c!important;color:#fff!important}
+html[data-theme="light"] .alert{color:#b91c1c}
+html[data-theme="light"] .alert.info{color:#1d4ed8}
+html[data-theme="light"] .stat-value.na{color:var(--muted)}

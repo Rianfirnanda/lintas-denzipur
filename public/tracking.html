@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>if (top === self) location.replace('admin.html#tracking');</script>
+<title>Tracking</title>
+<link rel="stylesheet" href="page-base.css">
+<link rel="stylesheet" href="theme-light.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script src="theme.js"></script>
+<style>
+.layout{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(300px,1fr);gap:14px}
+@media(max-width:1000px){.layout{grid-template-columns:1fr}}
+#map{height:540px;border-radius:12px;z-index:0}
+@media(max-width:700px){#map{height:360px}}
+.list{max-height:540px;overflow:auto}
+.item{border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px;cursor:pointer;font-size:13px}
+.item:focus{outline:2px solid var(--blue)}
+.item.sel{border-color:var(--blue);background:rgba(59,130,246,.08)}
+.item .row{gap:6px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin:8px 0}
+.mk{display:flex;align-items:center;justify-content:center;font-size:15px;line-height:1;text-shadow:0 0 3px #000}
+.mk-lap{color:#60a5fa}.mk-man{color:#fb923c}
+.leaflet-popup-content{font-size:12.5px;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="page-header"><h1>Tracking</h1><p>Pemantauan lokasi untuk administrasi kegiatan dan keselamatan personel. Tiga sumber lokasi ditampilkan terpisah.</p></div>
+<div class="tabs" role="tablist">
+  <button class="tab" role="tab" aria-selected="true" data-tab="live">Live Tracking</button>
+  <button class="tab" role="tab" aria-selected="false" data-tab="hist">Riwayat Sesi</button>
+  <button class="tab" role="tab" aria-selected="false" data-tab="lap">Lokasi Laporan &amp; Titik Manual</button>
+</div>
+<div class="panel">
+  <div class="form" id="filters">
+    <label>Unit<select id="fUnit"></select></label>
+    <label>Kegiatan<select id="fKeg"><option value="">Semua kegiatan</option></select></label>
+    <label>Cari personel<input id="fQ" type="search" placeholder="Nama / pangkat"></label>
+    <label data-only="live">Status sesi<select id="fSt"><option value="">Aktif &amp; baru selesai</option><option value="aktif">Aktif saja</option><option value="selesai">Selesai (12 jam terakhir)</option><option value="kedaluwarsa">Lokasi belum diperbarui</option></select></label>
+    <label data-only="hist lap">Dari<input type="date" id="fFrom"></label>
+    <label data-only="hist lap">Sampai<input type="date" id="fTo"></label>
+  </div>
+  <div class="legend" id="legend"></div>
+</div>
+<div class="layout">
+  <div class="panel" style="padding:10px"><div id="map" role="region" aria-label="Peta tracking"></div></div>
+  <div class="panel"><div class="row" style="margin-bottom:8px"><b class="grow" id="listTitle">Personel</b><span class="muted" id="count" style="font-size:12px"></span></div>
+    <div id="state"></div><div class="list" id="list"></div>
+    <div class="acts" style="margin-top:8px"><button class="btn" id="more" hidden>Muat lebih banyak</button><button class="btn" id="exportBtn" hidden>Ekspor CSV titik</button><button class="btn ok" id="addManual" hidden>+ Titik manual</button></div>
+  </div>
+</div>
+
+<dialog id="manDlg"><form method="dialog" class="form" id="manForm">
+  <h2 class="wide">Titik Manual</h2>
+  <p class="wide muted" style="font-size:12px">Klik peta untuk mengisi koordinat, atau ketik manual.</p>
+  <label class="wide">Nama titik<input name="nama" required minlength="2" maxlength="120"></label>
+  <label>Unit<select name="unitId" required></select></label>
+  <label>Lintang<input name="lat" type="number" step="any" min="-90" max="90" required></label>
+  <label>Bujur<input name="lng" type="number" step="any" min="-180" max="180" required></label>
+  <label class="wide">Keterangan<textarea name="keterangan" rows="2" maxlength="500"></textarea></label>
+  <div class="wide acts" style="justify-content:flex-end"><button class="btn" value="cancel" formnovalidate>Batal</button><button class="btn primary" value="ok">Simpan</button></div>
+</form></dialog>
+<div class="toast" id="toast"></div>
+
+<script type="module">
+import { guard, $, esc, F, db, call, toast, chip, LABEL, fmtTime, ago, tsMs, errText, ready, scoped, unitOptions, loadUnits, stateBox, createListenerScope, downloadCsv } from './common.js';
+import { freshness } from './js/dz-core.js';
+
+guard(async (ctx) => {
+  const subs = createListenerScope();
+  window.__dzListeners = () => subs.size; // dipakai uji: memastikan tidak ada listener ganda
+  let tab = 'live', staleMin = 5, rows = [], selected = null, histCursor = null, histRows = [], trackCache = null;
+  try { const s = await F.getDoc(F.doc(db, 'pengaturan', 'umum')); if (s.exists() && Number.isInteger(s.data().staleMinutes)) staleMin = s.data().staleMinutes; } catch { /* bawaan */ }
+
+  $('fUnit').innerHTML = await unitOptions(ctx);
+  const iso = (d) => new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  $('fFrom').value = iso(new Date(Date.now() - 7 * 864e5)); $('fTo').value = iso(new Date());
+
+  const map = L.map('map').setView([-3.8, 102.3], 9);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' }).addTo(map);
+  const layer = L.featureGroup().addTo(map);
+  const markers = new Map();
+  let fitted = false;
+
+  const icon = (cls, sym) => L.divIcon({ className: '', html: `<div class="mk ${cls}" aria-hidden="true">${sym}</div>`, iconSize: [18, 18], iconAnchor: [9, 9] });
+  const legends = {
+    live: '<span>● hijau: lokasi sesi terbaru</span><span>◌ oranye putus-putus: lokasi belum diperbarui</span><span>○ abu-abu: sesi selesai</span><span>lingkaran tipis: radius akurasi</span>',
+    hist: '<span>garis: jalur sesi dari riwayat titik (urut waktu pengambilan)</span><span>● titik dengan masalah kualitas ditandai merah</span>',
+    lap: '<span style="color:#60a5fa">■ lokasi laporan</span><span style="color:#fb923c">▲ titik manual operator</span>',
+  };
+
+  const clearMap = () => { layer.clearLayers(); markers.clear(); fitted = false; };
+  const fit = () => { if (!fitted && layer.getLayers().length) { map.fitBounds(layer.getBounds(), { padding: [30, 30], maxZoom: 16 }); fitted = true; } };
+  const q = () => $('fQ').value.trim().toLowerCase();
+  const unitF = () => $('fUnit').value;
+  const range = () => [new Date($('fFrom').value + 'T00:00:00+07:00'), new Date($('fTo').value + 'T23:59:59+07:00')];
+  const setCount = (t) => ($('count').textContent = t);
+
+  function fillKeg(list) {
+    const cur = $('fKeg').value, m = new Map();
+    list.forEach((r) => r.kegiatanId && m.set(r.kegiatanId, r.kegiatanJudul || r.kegiatanId));
+    $('fKeg').innerHTML = '<option value="">Semua kegiatan</option>' + [...m].map(([id, n]) => `<option value="${esc(id)}">${esc(n)}</option>`).join('');
+    if (m.has(cur)) $('fKeg').value = cur;
+  }
+  function select(id, fromMap) {
+    selected = id;
+    document.querySelectorAll('.item').forEach((el) => el.classList.toggle('sel', el.dataset.id === id));
+    const m = markers.get(id);
+    if (m) { if (!fromMap) map.setView(m.getLatLng(), Math.max(map.getZoom(), 15)); m.openPopup(); }
+    if (fromMap) document.querySelector(`.item[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest' });
+  }
+  $('list').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-track]'); if (b) { e.stopPropagation(); return showTrack(b.dataset.track); }
+    const d = e.target.closest('[data-delman]'); if (d) { e.stopPropagation(); return delManual(d.dataset.delman); }
+    const it = e.target.closest('.item'); if (it) select(it.dataset.id);
+  });
+  $('list').addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.classList.contains('item')) select(e.target.dataset.id); });
+
+  /* ═════ 1. Live Tracking (posisi terakhir sesi aktif) ═════ */
+  function subscribeLive() {
+    stateBox($('state'), 'loading', 'Memuat posisi terakhir…');
+    const since = F.Timestamp.fromMillis(Date.now() - 12 * 3600_000);
+    const base = scoped(F.collection(db, 'lokasi_terkini'), ctx, 'unitId', unitF());
+    const qy = F.query(base, F.where('updatedAt', '>=', since), F.orderBy('updatedAt', 'desc'), F.limit(200));
+    subs.add(F.onSnapshot(qy, (snap) => {
+      rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      fillKeg(rows); drawLive(); ready();
+    }, (e) => { stateBox($('state'), 'err', 'Gagal memuat lokasi: ' + errText(e), () => { subs.clear(); subscribeLive(); }); ready(); }));
+  }
+  function liveFiltered() {
+    const now = Date.now(), st = $('fSt').value, k = $('fKeg').value, s = q();
+    return rows.map((r) => ({ ...r, fresh: freshness(tsMs(r.capturedAt), now, staleMin) }))
+      .filter((r) => (!k || r.kegiatanId === k) && (!s || `${r.nama} ${r.pangkat}`.toLowerCase().includes(s)))
+      .filter((r) => !st || (st === 'kedaluwarsa' ? r.status === 'aktif' && r.fresh !== 'baru' : r.status === st))
+      .sort((a, b) => (a.status === b.status ? 0 : a.status === 'aktif' ? -1 : 1) || (tsMs(b.capturedAt) || 0) - (tsMs(a.capturedAt) || 0));
+  }
+  function drawLive() {
+    const list = liveFiltered();
+    clearMapKeepFit();
+    $('state').innerHTML = '';
+    setCount(`${list.filter((r) => r.status === 'aktif').length} sesi aktif · ${list.length} ditampilkan`);
+    list.forEach((r) => {
+      if (r.lat == null) return;
+      const ended = r.status !== 'aktif', stale = r.fresh !== 'baru';
+      const color = ended ? '#9ca3af' : stale ? '#f59e0b' : '#22c55e';
+      if (r.acc) L.circle([r.lat, r.lng], { radius: Math.min(r.acc, 2000), color, weight: 1, fillOpacity: .05, interactive: false }).addTo(layer);
+      const m = L.circleMarker([r.lat, r.lng], { radius: 9, color, weight: 3, dashArray: stale && !ended ? '4 3' : null, fillColor: color, fillOpacity: ended ? .25 : stale ? .2 : .85 })
+        .bindPopup(livePopup(r)).on('click', () => select(r.id, true)).addTo(layer);
+      markers.set(r.id, m);
+    });
+    fit();
+    $('list').innerHTML = list.map((r) => `<div class="item ${r.id === selected ? 'sel' : ''}" tabindex="0" data-id="${esc(r.id)}">
+      <div class="row"><b class="grow">${esc(r.pangkat)} ${esc(r.nama || '(tanpa nama)')}</b>${chip('sesi', r.status)}</div>
+      <div class="muted">${esc(r.kegiatanJudul || '')}</div>
+      <div class="row" style="margin-top:4px">${r.status === 'aktif' ? chip('fresh', r.fresh) : ''}
+        <small class="muted">${r.capturedAt ? 'diambil ' + ago(tsMs(r.capturedAt)) : 'belum ada titik lokasi'}${r.acc ? ` · ±${Math.round(r.acc)} m` : ''}</small></div>
+      ${r.status !== 'aktif' ? `<small class="muted">Sesi selesai ${r.selesaiAt ? fmtTime(tsMs(r.selesaiAt)) : ''} ${r.endedReason ? '(' + esc(LABEL.endedReason[r.endedReason] || r.endedReason) + ')' : ''}</small>` : ''}
+      ${(r.quality || []).length ? `<div><span class="chip warn">⚑ ${esc(r.quality.map((x) => LABEL.quality[x] || x).join(', '))}</span></div>` : ''}
+      <div class="acts" style="margin-top:6px"><button class="btn" data-track="${esc(r.id)}">Lihat jalur</button></div></div>`).join('')
+      || '<div class="empty">Tidak ada sesi tracking yang cocok dengan filter.</div>';
+  }
+  function clearMapKeepFit() { const f = fitted; clearMap(); fitted = f; }
+  function livePopup(r) {
+    return `<b>${esc(r.pangkat)} ${esc(r.nama)}</b><br>${esc(r.kegiatanJudul || '')}<br>
+      Sumber: <b>Sesi tracking (GPS perangkat)</b><br>
+      Status: ${esc(LABEL.sesi[r.status] || r.status)} · ${esc(LABEL.fresh[r.fresh])}<br>
+      Waktu pengambilan: ${fmtTime(tsMs(r.capturedAt), { seconds: true })}<br>
+      Diterima server: ${fmtTime(tsMs(r.receivedAt), { seconds: true })}<br>
+      Akurasi: ±${r.acc != null ? Math.round(r.acc) + ' m' : '–'}<br>
+      <small>${(+r.lat).toFixed(5)}, ${(+r.lng).toFixed(5)}</small>
+      ${(r.quality || []).length ? `<br><small>Catatan kualitas data: ${esc(r.quality.map((x) => LABEL.quality[x] || x).join(', '))}</small>` : ''}`;
+  }
+  // Kesegaran berubah seiring waktu tanpa data baru.
+  setInterval(() => { if (tab === 'live' && rows.length) drawLive(); }, 15000);
+
+  /* ═════ 2. Riwayat Sesi ═════ */
+  async function loadHist(append) {
+    if (!append) { histRows = []; histCursor = null; $('list').innerHTML = ''; stateBox($('state'), 'loading', 'Memuat riwayat sesi…'); }
+    const [a, b] = range();
+    try {
+      let qy = F.query(scoped(F.collection(db, 'sesi'), ctx, 'unitId', unitF()), F.where('mulaiAt', '>=', F.Timestamp.fromDate(a)), F.where('mulaiAt', '<=', F.Timestamp.fromDate(b)), F.orderBy('mulaiAt', 'desc'), F.limit(50));
+      if (histCursor) qy = F.query(qy, F.startAfter(histCursor));
+      const snap = await F.getDocs(qy);
+      histCursor = snap.docs[snap.docs.length - 1] || histCursor;
+      histRows.push(...snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      $('more').hidden = snap.size < 50;
+      $('state').innerHTML = '';
+      fillKeg(histRows); drawHist();
+    } catch (e) { stateBox($('state'), 'err', 'Gagal memuat riwayat: ' + errText(e), () => loadHist(false)); }
+    ready();
+  }
+  function drawHist() {
+    const k = $('fKeg').value, s = q();
+    const list = histRows.filter((r) => (!k || r.kegiatanId === k) && (!s || `${r.nama} ${r.pangkat}`.toLowerCase().includes(s)));
+    setCount(`${list.length} sesi`);
+    $('list').innerHTML = list.map((r) => `<div class="item ${r.id === selected ? 'sel' : ''}" tabindex="0" data-id="${esc(r.id)}">
+      <div class="row"><b class="grow">${esc(r.pangkat)} ${esc(r.nama)}</b>${chip('sesi', r.status)}</div>
+      <div class="muted">${esc(r.kegiatanJudul || '')}</div>
+      <small class="muted">${fmtTime(tsMs(r.mulaiAt))} → ${r.selesaiAt ? fmtTime(tsMs(r.selesaiAt)) : 'berjalan'} · ${r.pointCount || 0} titik${r.endedReason ? ' · ' + esc(LABEL.endedReason[r.endedReason] || r.endedReason) : ''}${r.titikDihapus ? ' · riwayat titik telah dihapus (masa simpan)' : ''}</small>
+      <div class="acts" style="margin-top:6px"><button class="btn" data-track="${esc(r.id)}" ${r.titikDihapus ? 'disabled' : ''}>Lihat jalur</button></div></div>`).join('')
+      || '<div class="empty">Tidak ada sesi pada periode ini.</div>';
+  }
+  $('more').onclick = () => loadHist(true);
+
+  async function showTrack(sessionId) {
+    toast('Memuat riwayat titik…');
+    try {
+      const r = await call('dzGetSessionTrack', { sessionId });
+      if (tab === 'live') await switchTab('hist', true);
+      clearMap();
+      trackCache = r;
+      const pts = r.points;
+      if (!pts.length) { toast('Sesi ini belum memiliki titik lokasi.', 'err'); return; }
+      L.polyline(pts.map((p) => [p.lat, p.lng]), { color: '#3b82f6', weight: 3 }).addTo(layer);
+      pts.forEach((p, i) => {
+        const bad = p.quality.length > 0;
+        L.circleMarker([p.lat, p.lng], { radius: i === pts.length - 1 ? 7 : 4, color: bad ? '#ef4444' : '#3b82f6', fillOpacity: .8 })
+          .bindPopup(`Titik #${p.seq}${p.terlambat ? ' (diterima terlambat)' : ''}<br>Sumber: riwayat sesi<br>Diambil: ${fmtTime(p.capturedAtMs, { seconds: true })}<br>Diterima server: ${fmtTime(p.receivedAtMs, { seconds: true })}<br>Akurasi: ±${Math.round(p.acc)} m${bad ? '<br>Kualitas: ' + esc(p.quality.map((x) => LABEL.quality[x] || x).join(', ')) : ''}`).addTo(layer);
+      });
+      fitted = false; fit();
+      $('exportBtn').hidden = false;
+      setCount(`${pts.length} titik${r.truncated ? ' (dibatasi)' : ''} · ${r.session.nama || ''}`);
+      toast(`Jalur sesi dimuat (${pts.length} titik).`);
+      select(sessionId);
+    } catch (e) { toast('Gagal memuat jalur: ' + errText(e), 'err'); }
+  }
+  $('exportBtn').onclick = async () => {
+    if (!trackCache) return;
+    await call('dzLogAccess', { jenis: 'ekspor_lokasi', filter: { sessionId: trackCache.session.id } }).catch(() => {});
+    downloadCsv(`riwayat-sesi-${trackCache.session.id}.csv`, [['Seq', 'Waktu pengambilan (WIB)', 'Diterima server (WIB)', 'Lintang', 'Bujur', 'Akurasi (m)', 'Kualitas', 'Terlambat'],
+      ...trackCache.points.map((p) => [p.seq, fmtTime(p.capturedAtMs, { seconds: true }), fmtTime(p.receivedAtMs, { seconds: true }), p.lat, p.lng, p.acc, p.quality.join(' '), p.terlambat ? 'ya' : ''])]);
+  };
+
+  /* ═════ 3. Lokasi Laporan & Titik Manual ═════ */
+  let lapRows = [], manRows = [];
+  async function loadLap() {
+    stateBox($('state'), 'loading', 'Memuat lokasi laporan dan titik manual…');
+    const [a, b] = range();
+    try {
+      const [ls, ms] = await Promise.all([
+        F.getDocs(F.query(scoped(F.collection(db, 'laporan'), ctx, 'unitId', unitF()), F.where('createdAt', '>=', F.Timestamp.fromDate(a)), F.where('createdAt', '<=', F.Timestamp.fromDate(b)), F.orderBy('createdAt', 'desc'), F.limit(300))),
+        F.getDocs(F.query(scoped(F.collection(db, 'titik_manual'), ctx, 'unitId', unitF()), F.orderBy('updatedAt', 'desc'), F.limit(300))),
+      ]);
+      lapRows = ls.docs.map((d) => ({ id: 'L-' + d.id, src: 'laporan', ...d.data() })).filter((r) => r.lokasi);
+      manRows = ms.docs.map((d) => ({ id: 'M-' + d.id, docId: d.id, src: 'manual', ...d.data() }));
+      $('state').innerHTML = '';
+      fillKeg(lapRows); drawLap();
+    } catch (e) { stateBox($('state'), 'err', 'Gagal memuat: ' + errText(e), loadLap); }
+    ready();
+  }
+  function drawLap() {
+    clearMapKeepFit();
+    const k = $('fKeg').value, s = q();
+    const L1 = lapRows.filter((r) => (!k || r.kegiatanId === k) && (!s || (r.judul || '').toLowerCase().includes(s)));
+    const L2 = k ? [] : manRows.filter((r) => !s || (r.nama || '').toLowerCase().includes(s));
+    L1.forEach((r) => markers.set(r.id, L.marker([r.lokasi.lat, r.lokasi.lng], { icon: icon('mk-lap', '■'), keyboard: false })
+      .bindPopup(`<b>${esc(r.judul)}</b><br>Sumber: <b>Lokasi laporan</b><br>${esc(r.kegiatanJudul || '')}<br>Status laporan: ${esc(LABEL.laporan[r.status])}<br>Diambil: ${fmtTime(r.lokasi.capturedAtMs)}<br>Akurasi: ±${Math.round(r.lokasi.acc)} m`)
+      .on('click', () => select(r.id, true)).addTo(layer)));
+    L2.forEach((r) => markers.set(r.id, L.marker([r.lat, r.lng], { icon: icon('mk-man', '▲'), keyboard: false })
+      .bindPopup(`<b>${esc(r.nama)}</b><br>Sumber: <b>Titik manual (input operator)</b><br>${esc(r.keterangan || '')}<br>Diperbarui: ${fmtTime(tsMs(r.updatedAt))}`)
+      .on('click', () => select(r.id, true)).addTo(layer)));
+    fit();
+    setCount(`${L1.length} lokasi laporan · ${L2.length} titik manual`);
+    $('list').innerHTML = [...L1.map((r) => `<div class="item" tabindex="0" data-id="${esc(r.id)}"><div class="row"><b class="grow">■ ${esc(r.judul)}</b><span class="chip chip-src">Lokasi laporan</span></div>
+        <small class="muted">${esc(r.kegiatanJudul || '')} · ${fmtTime(r.lokasi.capturedAtMs)} · ${chip('laporan', r.status)}</small></div>`),
+      ...L2.map((r) => `<div class="item" tabindex="0" data-id="${esc(r.id)}"><div class="row"><b class="grow">▲ ${esc(r.nama)}</b><span class="chip warn">Titik manual</span></div>
+        <small class="muted">${esc(r.keterangan || '')}</small>${canManage(r.unitId) ? `<div class="acts" style="margin-top:6px"><button class="btn dg" data-delman="${esc(r.docId)}">Hapus</button></div>` : ''}</div>`)].join('')
+      || '<div class="empty">Tidak ada lokasi laporan atau titik manual pada filter ini.</div>';
+  }
+  const canManage = (u) => ctx.isSys || (ctx.akses.role === 'operator' && ctx.scope.includes(u));
+  async function delManual(id) {
+    if (!confirm('Hapus titik manual ini?')) return;
+    try { await F.deleteDoc(F.doc(db, 'titik_manual', id)); toast('Titik manual dihapus.'); loadLap(); } catch (e) { toast('Gagal: ' + errText(e), 'err'); }
+  }
+  $('addManual').onclick = async () => {
+    const f = $('manForm'); f.reset();
+    f.unitId.innerHTML = await unitOptions(ctx, { all: false, selected: unitF() });
+    const c = map.getCenter(); f.lat.value = c.lat.toFixed(6); f.lng.value = c.lng.toFixed(6);
+    $('manDlg').show();
+  };
+  map.on('click', (e) => { if ($('manDlg').open) { $('manForm').lat.value = e.latlng.lat.toFixed(6); $('manForm').lng.value = e.latlng.lng.toFixed(6); } });
+  $('manForm').addEventListener('submit', async (e) => {
+    if (e.submitter?.value !== 'ok') return;
+    e.preventDefault();
+    const f = e.target;
+    try {
+      await F.addDoc(F.collection(db, 'titik_manual'), { nama: f.nama.value.trim(), keterangan: f.keterangan.value.trim(), unitId: f.unitId.value, kegiatanId: null, lat: +f.lat.value, lng: +f.lng.value, createdBy: ctx.uid, updatedAt: F.serverTimestamp() });
+      $('manDlg').close(); toast('Titik manual disimpan.'); loadLap();
+    } catch (x) { toast('Gagal: ' + errText(x), 'err'); }
+  });
+
+  /* ═════ Tab & filter ═════ */
+  function switchTab(t, keepMap) {
+    tab = t; subs.clear(); selected = null;
+    if (!keepMap) clearMap();
+    $('list').innerHTML = ''; $('more').hidden = true; $('exportBtn').hidden = true; $('addManual').hidden = !(t === 'lap' && (ctx.isSys || ctx.akses.role === 'operator'));
+    document.querySelectorAll('.tab').forEach((x) => x.setAttribute('aria-selected', String(x.dataset.tab === t)));
+    document.querySelectorAll('[data-only]').forEach((el) => (el.hidden = !el.dataset.only.split(' ').includes(t)));
+    $('listTitle').textContent = { live: 'Personel (posisi terakhir sesi)', hist: 'Riwayat sesi', lap: 'Lokasi laporan & titik manual' }[t];
+    $('legend').innerHTML = legends[t];
+    $('fKeg').innerHTML = '<option value="">Semua kegiatan</option>';
+    return t === 'live' ? subscribeLive() : t === 'hist' ? loadHist(false) : loadLap();
+  }
+  document.querySelectorAll('.tab').forEach((x) => (x.onclick = () => switchTab(x.dataset.tab)));
+  $('fUnit').onchange = () => switchTab(tab);
+  ['fFrom', 'fTo'].forEach((id) => ($(id).onchange = () => switchTab(tab)));
+  const redraw = () => (tab === 'live' ? drawLive() : tab === 'hist' ? drawHist() : drawLap());
+  $('fKeg').onchange = () => { fitted = false; redraw(); };
+  $('fSt').onchange = redraw; $('fQ').oninput = redraw;
+  addEventListener('pagehide', () => subs.clear());
+
+  call('dzLogAccess', { jenis: 'buka_live_tracking', filter: { unit: unitF() || 'lingkup' } }).catch(() => {});
+  switchTab('live');
+}, { roles: ['sysadmin', 'operator'] });
+</script>
+</body>
+</html>

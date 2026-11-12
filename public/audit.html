@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>if (top === self) location.replace('admin.html#audit');</script>
+<title>Log Audit</title>
+<link rel="stylesheet" href="page-base.css">
+<link rel="stylesheet" href="theme-light.css">
+<script src="theme.js"></script>
+</head>
+<body>
+<div class="page-header"><h1>Log Audit</h1><p>Perubahan akses, sesi tracking, laporan, akses riwayat lokasi, dan ekspor. Ditulis oleh server; tidak dapat diubah dari klien.</p></div>
+<div class="panel"><div class="form"><label>Jenis<select id="fJ"><option value="">Semua</option>
+  <option value="akses_diubah">Akses diubah</option><option value="akun_baru">Akun baru</option><option value="akun_dihapus">Akun dihapus</option>
+  <option value="tracking_mulai">Tracking mulai</option><option value="tracking_selesai">Tracking selesai</option>
+  <option value="akses_riwayat_lokasi">Akses riwayat lokasi</option><option value="buka_live_tracking">Buka live tracking</option>
+  <option value="ekspor_laporan">Ekspor laporan</option><option value="ekspor_lokasi">Ekspor lokasi</option><option value="pemeliharaan">Pemeliharaan</option></select></label></div></div>
+<div class="panel"><div id="state"></div><div class="table-wrap"><table><thead><tr><th>Waktu (WIB)</th><th>Jenis</th><th>Ringkasan</th><th>Pelaku</th></tr></thead><tbody id="rows"></tbody></table></div>
+  <div class="acts" style="margin-top:10px"><button class="btn" id="more" hidden>Muat lebih banyak</button></div></div>
+<div class="toast" id="toast"></div>
+<script type="module">
+import { guard, $, esc, F, db, fmtTime, tsMs, errText, ready, stateBox } from './common.js';
+guard(async () => {
+  let cursor = null, rows = [];
+  async function load(append) {
+    if (!append) { cursor = null; rows = []; stateBox($('state'), 'loading', 'Memuat log…'); }
+    try {
+      const j = $('fJ').value;
+      let q = F.query(F.collection(db, 'audit'), ...(j ? [F.where('jenis', '==', j)] : []), F.orderBy('at', 'desc'), F.limit(100));
+      if (cursor) q = F.query(q, F.startAfter(cursor));
+      const s = await F.getDocs(q);
+      cursor = s.docs[s.docs.length - 1] || cursor; rows.push(...s.docs.map((d) => d.data()));
+      $('more').hidden = s.size < 100; $('state').innerHTML = '';
+      $('rows').innerHTML = rows.map((r) => `<tr><td>${fmtTime(tsMs(r.at), { seconds: true })}</td><td><code>${esc(r.jenis)}</code></td><td>${esc(r.ringkasan)}</td><td><small class="muted">${esc(r.actorUid || '')}</small></td></tr>`).join('') || '<tr><td colspan="4" class="empty">Belum ada log.</td></tr>';
+    } catch (e) { stateBox($('state'), 'err', 'Gagal memuat log: ' + errText(e), () => load(false)); }
+    ready();
+  }
+  $('fJ').onchange = () => load(false); $('more').onclick = () => load(true);
+  load(false);
+}, { roles: ['sysadmin'] });
+</script>
+</body>
+</html>

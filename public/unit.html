@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>if (top === self) location.replace('admin.html#unit');</script>
+<title>Unit</title>
+<link rel="stylesheet" href="page-base.css">
+<link rel="stylesheet" href="theme-light.css">
+<script src="theme.js"></script>
+</head>
+<body>
+<div class="page-header"><h1>Unit</h1><p>Daftar unit menjadi dasar keanggotaan personel dan lingkup akses operator, pemeriksa, dan pembaca.</p></div>
+<div class="panel"><form id="f" class="form">
+  <label>ID unit<input name="id" required pattern="[A-Za-z0-9_-]{2,40}" placeholder="mis. KI-A" title="Huruf, angka, - atau _, 2–40 karakter"></label>
+  <label>Nama unit<input name="nama" required minlength="2" maxlength="120"></label>
+  <label>Kode<input name="kode" maxlength="30"></label>
+  <label>Keterangan<input name="keterangan" maxlength="300"></label>
+  <div class="acts"><button class="btn ok" type="submit">Simpan</button><button class="btn" type="reset">Bersihkan</button></div>
+</form><p class="muted" style="font-size:12px;margin-top:8px">ID unit tidak dapat diubah setelah dipakai. Menghapus unit yang masih dipakai personel/kegiatan akan memutus lingkup akses.</p></div>
+<div class="panel"><div id="state"></div><div class="table-wrap"><table>
+  <thead><tr><th>ID</th><th>Nama</th><th>Kode</th><th>Keterangan</th><th>Aksi</th></tr></thead><tbody id="rows"></tbody></table></div></div>
+<div class="toast" id="toast"></div>
+<script type="module">
+import { guard, $, esc, F, db, toast, errText, ready, stateBox } from './common.js';
+guard(async () => {
+  let rows = [];
+  const f = $('f');
+  const unsub = F.onSnapshot(F.query(F.collection(db, 'unit'), F.orderBy('nama'), F.limit(300)), (s) => {
+    rows = s.docs.map((d) => ({ id: d.id, ...d.data() })); $('state').innerHTML = '';
+    $('rows').innerHTML = rows.map((u) => `<tr><td><code>${esc(u.id)}</code></td><td>${esc(u.nama)}</td><td>${esc(u.kode || '')}</td><td>${esc(u.keterangan || '')}</td>
+      <td><div class="acts"><button class="btn pr" data-e="${esc(u.id)}">Ubah</button><button class="btn dg" data-d="${esc(u.id)}">Hapus</button></div></td></tr>`).join('')
+      || '<tr><td colspan="5" class="empty">Belum ada unit. Tambahkan unit pertama di atas.</td></tr>';
+    ready();
+  }, (e) => { stateBox($('state'), 'err', 'Gagal memuat unit: ' + errText(e), () => location.reload()); ready(); });
+  addEventListener('pagehide', unsub);
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await F.setDoc(F.doc(db, 'unit', f.id.value.trim()), { nama: f.nama.value.trim(), kode: f.kode.value.trim() || null, keterangan: f.keterangan.value.trim() || null, updatedAt: F.serverTimestamp() });
+      toast('Unit disimpan.'); f.reset(); f.id.readOnly = false;
+    } catch (x) { toast('Gagal: ' + errText(x), 'err'); }
+  };
+  f.onreset = () => { f.id.readOnly = false; };
+  $('rows').onclick = async (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    const u = rows.find((x) => x.id === (b.dataset.e || b.dataset.d));
+    if (b.dataset.e) { f.id.value = u.id; f.id.readOnly = true; f.nama.value = u.nama; f.kode.value = u.kode || ''; f.keterangan.value = u.keterangan || ''; scrollTo({ top: 0, behavior: 'smooth' }); }
+    if (b.dataset.d && confirm(`Hapus unit ${u.nama}?`)) { try { await F.deleteDoc(F.doc(db, 'unit', u.id)); toast('Unit dihapus.'); } catch (x) { toast(errText(x), 'err'); } }
+  };
+}, { roles: ['sysadmin'] });
+</script>
+</body>
+</html>

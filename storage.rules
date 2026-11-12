@@ -1,0 +1,28 @@
+rules_version = '2';
+// Rules untuk bucket khusus dokumentasi Denzipur (bukan bucket default Lintas Benteng).
+// Otorisasi memakai custom claim "dz" yang diset Cloud Functions saat akses berubah.
+// File dibaca lewat SDK (getBlob/getBytes) dengan autentikasi, bukan tautan publik bertoken.
+service firebase.storage {
+  match /b/{bucket}/o {
+    function dz() { return request.auth.token.dz; }
+    function active() { return request.auth != null && request.auth.token.dz != null && dz().s == 'active'; }
+
+    match /laporan/{unitId}/{ownerUid}/{laporanId}/{fileName} {
+      allow read: if active() && (
+        request.auth.uid == ownerUid
+        || dz().r == 'sysadmin'
+        || (dz().r in ['operator', 'pemeriksa'] && unitId in dz().sc));
+      // "create" di Storage juga mencakup menimpa file; resource == null mencegah penimpaan.
+      allow create: if active()
+        && resource == null
+        && request.auth.uid == ownerUid
+        && dz().u == unitId
+        && fileName.matches('^[A-Za-z0-9_.-]{1,80}$')
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+      // Dokumentasi tidak dapat ditimpa atau dihapus dari klien (menjaga laporan yang sudah disetujui).
+      allow update, delete: if false;
+    }
+    match /{all=**} { allow read, write: if false; }
+  }
+}

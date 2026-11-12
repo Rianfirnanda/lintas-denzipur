@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0a0a0a">
+<title>Lintas Denzipur — Anggota</title>
+<link rel="icon" type="image/png" href="https://firebasestorage.googleapis.com/v0/b/lintas-benteng.firebasestorage.app/o/assets%2Fdenzipur%2014%20logo.png?alt=media&token=dc433442-00dd-40d5-93b1-a2529c9813b0">
+<link rel="stylesheet" href="page-base.css">
+<link rel="stylesheet" href="theme-light.css">
+<script src="theme.js"></script>
+<style>
+body{padding:0;max-width:720px;margin:0 auto}
+header.top{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--border);background:var(--bg)}
+header.top img{height:34px}
+header.top b{font-size:14px;letter-spacing:.08em}
+header.top .grow{min-width:0}
+header.top small{display:block;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+main{padding:16px}
+#trackBanner{display:none;position:sticky;top:0;z-index:60;background:#14532d;color:#fff;padding:10px 16px;font-size:13px;font-weight:700;align-items:center;gap:10px}
+#trackBanner.on{display:flex}
+#trackBanner .dot{width:10px;height:10px;border-radius:50%;background:#4ade80;box-shadow:0 0 8px #4ade80;flex-shrink:0}
+#trackBanner.warn{background:#78350f}#trackBanner.warn .dot{background:#fbbf24;box-shadow:0 0 8px #fbbf24}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:13px}
+.kv dt{color:var(--muted)}.kv dd{font-weight:600;word-break:break-word}
+.big{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+.big .btn{padding:13px 18px;font-size:14px;border-radius:12px}
+.btn.start{background:#15803d;border-color:#15803d;color:#fff}
+.btn.stop{background:#b91c1c;border-color:#b91c1c;color:#fff}
+.note{font-size:12px;color:var(--muted);line-height:1.55;margin-top:12px}
+.alert{border-radius:10px;padding:10px 12px;font-size:13px;margin-top:12px;border:1px solid rgba(239,83,80,.45);color:#fca5a5;background:rgba(239,83,80,.08)}
+.alert.info{border-color:rgba(59,130,246,.45);color:#93c5fd;background:rgba(59,130,246,.08)}
+.alert[hidden]{display:none}
+.lap{border-top:1px solid var(--border);padding:12px 0;display:flex;gap:10px;justify-content:space-between;align-items:flex-start}
+.thumbs{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}.thumbs img{width:64px;height:64px;object-fit:cover;border-radius:8px}
+.center{text-align:center;padding:40px 16px}
+</style>
+</head>
+<body>
+<div id="trackBanner" role="status" aria-live="polite"><span class="dot" aria-hidden="true"></span><span id="bannerTxt">TRACKING AKTIF</span></div>
+<header class="top">
+  <img src="https://firebasestorage.googleapis.com/v0/b/lintas-benteng.firebasestorage.app/o/assets%2Fdenzipur%2014%20logo.png?alt=media&token=dc433442-00dd-40d5-93b1-a2529c9813b0" alt="Denzipur">
+  <div class="grow"><b>LINTAS DENZIPUR</b><small id="who">Aplikasi Anggota</small></div>
+  <button class="btn" id="themeBtn" onclick="toggleTheme()" title="Ganti tema" aria-label="Ganti tema">◐</button>
+  <button class="btn dg" id="logoutBtn" hidden>Keluar</button>
+</header>
+
+<main id="main">
+  <div class="center" id="boot"><span class="spin"></span></div>
+
+  <section id="loginBox" class="panel" hidden>
+    <h2>Masuk</h2>
+    <p class="muted" style="font-size:13px;margin-bottom:14px">Masuk dengan akun Google yang telah didaftarkan administrator.</p>
+    <button class="btn primary" id="googleBtn" style="width:100%;justify-content:center;padding:12px">Masuk dengan Google</button>
+    <form id="devLogin" hidden class="form" style="margin-top:14px">
+      <small class="wide" style="color:var(--orange)">Mode emulator lokal — akun uji fiktif saja.</small>
+      <label>Email uji<input name="email" type="email" required></label>
+      <label>Sandi uji<input name="pw" type="password" minlength="6" required></label>
+      <button class="btn" type="submit">Masuk (emulator)</button>
+    </form>
+    <div class="alert" id="loginMsg" hidden></div>
+  </section>
+
+  <section id="blockedBox" class="panel" hidden>
+    <h2 id="blockedTitle">Menunggu persetujuan</h2>
+    <p class="muted" id="blockedTxt" style="font-size:13px"></p>
+  </section>
+
+  <div id="appBox" hidden>
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" aria-selected="true" data-tab="tTrack">Tracking</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="tLap">Laporan</button>
+    </div>
+
+    <section id="tTrack" role="tabpanel">
+      <div class="panel">
+        <h2>Tracking Kegiatan</h2>
+        <label class="form" style="display:block"><span class="muted" style="font-size:12px;font-weight:600">Kegiatan yang ditugaskan</span>
+          <select id="kgSel" style="margin-top:6px"></select></label>
+        <div id="kgInfo" class="note"></div>
+        <dl class="kv" style="margin-top:14px">
+          <dt>Status sesi</dt><dd id="vSesi">Tidak ada sesi</dd>
+          <dt>Lokasi terakhir</dt><dd id="vLok">–</dd>
+          <dt>Sinkronisasi</dt><dd id="vSync">–</dd>
+          <dt>Izin lokasi</dt><dd id="vPerm">Belum diminta</dd>
+        </dl>
+        <div class="alert" id="trackErr" hidden></div>
+        <div class="alert info" id="trackInfo" hidden></div>
+        <div class="big">
+          <button class="btn start" id="startBtn">▶ Mulai Tracking</button>
+          <button class="btn" id="resumeBtn" hidden>▶ Lanjutkan Tracking</button>
+          <button class="btn stop" id="stopBtn" hidden>■ Akhiri Tracking</button>
+          <button class="btn" id="retryBtn" hidden>Coba Lagi</button>
+          <button class="btn" id="otherBtn" hidden>Akhiri sesi lama</button>
+        </div>
+        <p class="note">Lokasi hanya dikirim selama sesi tracking aktif untuk kegiatan yang ditugaskan, dan hanya dapat dilihat administrator serta operator unit Anda.
+          <b>Keterbatasan:</b> ini aplikasi web — pengambilan lokasi berjalan saat halaman ini terbuka dan layar menyala. Saat layar terkunci, browser ditutup, atau halaman berada di latar belakang, browser dapat menghentikan GPS; titik akan dilanjutkan ketika halaman aktif kembali. Titik yang belum terkirim disimpan sementara di perangkat (maks. <span id="vMaxQ">500</span> titik) dan dikirim ulang saat koneksi pulih.</p>
+        <label class="note" style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="wakeChk" style="width:auto"> Jaga layar tetap menyala selama tracking (jika didukung browser)</label>
+      </div>
+    </section>
+
+    <section id="tLap" role="tabpanel" hidden>
+      <div class="panel">
+        <div class="row"><h2 class="grow" style="margin:0">Laporan Saya</h2><button class="btn primary" id="newLapBtn">+ Laporan Baru</button></div>
+        <div id="lapList" style="margin-top:10px"></div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<dialog id="lapDlg">
+  <form id="lapForm" class="form" method="dialog">
+    <h2 class="wide" id="lapDlgTitle">Laporan Kegiatan</h2>
+    <div class="alert wide" id="lapRevisi" hidden></div>
+    <label class="wide">Kegiatan<select name="kegiatanId" required></select></label>
+    <label class="wide">Judul<input name="judul" required minlength="3" maxlength="160"></label>
+    <label class="wide">Uraian<textarea name="isi" rows="5" maxlength="5000"></textarea></label>
+    <label class="wide" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" name="pakaiLokasi" style="width:auto"> Sertakan lokasi saat ini (lokasi laporan)</label>
+    <div class="wide muted" id="lapLokInfo" style="font-size:12px"></div>
+    <label class="wide">Foto dokumentasi (JPG/PNG/WebP, maks. 5 MB/foto, maks. 10)<input name="foto" type="file" accept="image/jpeg,image/png,image/webp" multiple></label>
+    <div class="wide thumbs" id="lapThumbs"></div>
+    <div class="wide acts" style="justify-content:flex-end">
+      <button class="btn" value="cancel" formnovalidate>Batal</button>
+      <button class="btn" id="lapSaveDraf" value="draf">Simpan Draf</button>
+      <button class="btn primary" id="lapSubmit" value="diajukan">Ajukan</button>
+    </div>
+    <div class="alert wide" id="lapErr" hidden></div>
+  </form>
+</dialog>
+<div class="toast" id="toast"></div>
+<script type="module" src="js/anggota.js"></script>
+</body>
+</html>

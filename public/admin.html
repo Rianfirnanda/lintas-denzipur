@@ -84,7 +84,10 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
 .icon-btn{background:none;border:none;cursor:pointer;color:var(--muted);display:flex;padding:4px}.icon-btn svg{width:18px;height:18px}
 .topbar-right{display:flex;align-items:center;gap:16px}
 .topbar-time{font-size:13px;color:var(--muted);font-weight:500}
-.status-dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);animation:pulse 2s infinite}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green)}
+.status-dot.off{background:var(--red);box-shadow:0 0 6px var(--red)}
+#devLogin[hidden]{display:none!important}
+@media(max-width:600px){.topbar{padding:0 14px}.topbar-time:first-of-type{display:none}}
 
 #view{position:fixed;top:64px;left:var(--sidebar-w);right:0;bottom:0;width:calc(100% - var(--sidebar-w));height:calc(100% - 64px);border:0;background:var(--bg)}
 #loader{position:fixed;top:64px;left:var(--sidebar-w);right:0;height:3px;z-index:120;opacity:0;transition:opacity .25s;pointer-events:none}
@@ -130,12 +133,18 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
         <span id="btnText">Masuk dengan Google</span>
       </button>
       <div class="msg" id="msgBox"></div>
+      <form id="devLogin" hidden style="margin-top:16px;display:grid;gap:8px">
+        <small style="color:#f59e0b">Mode emulator lokal — akun uji fiktif saja.</small>
+        <input name="email" type="email" placeholder="email uji" required style="padding:10px;border-radius:10px;border:1px solid var(--border);background:transparent;color:inherit">
+        <input name="pw" type="password" placeholder="sandi uji" required minlength="6" style="padding:10px;border-radius:10px;border:1px solid var(--border);background:transparent;color:inherit">
+        <button class="google-btn" type="submit">Masuk (emulator)</button>
+      </form>
     </div>
 
     <div class="pending" id="pendingView">
       <div class="p-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
       <h2>Menunggu Persetujuan</h2>
-      <p>Akun kamu sudah terdaftar, tapi belum diaktifkan oleh admin. Hubungi admin untuk aktivasi akses.</p>
+      <p id="pendingText">Akun Anda sudah terdaftar, tetapi belum diaktifkan administrator. Hubungi administrator untuk aktivasi akses.</p>
       <span class="email-chip" id="pendingEmail">-</span>
       <button class="btn-out" id="pendingLogout">Keluar</button>
     </div>
@@ -156,7 +165,7 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
     <div class="topbar-right">
       <button class="icon-btn" onclick="toggleTheme()" title="Ganti tema"><i data-feather="sun"></i></button>
       <div class="topbar-time" id="clock">--:--:--</div>
-      <div class="status-dot" title="System Online"></div>
+      <div class="topbar-time" style="display:flex;align-items:center;gap:6px"><span class="status-dot" id="netDot"></span><span id="netTxt">Online</span></div>
     </div>
   </div>
 
@@ -168,28 +177,11 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
 
 <script src="sidebar.js"></script>
 <script type="module">
-import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
-import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
-import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+import { auth, call, errText, onAuthStateChanged, signOut, DZ } from './js/firebase.js';
+import { GoogleAuthProvider, signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import { LABEL } from './js/dz-core.js';
 
-const firebaseConfig = {
-  apiKey: "AIzaSyAlVfejf312G-tIleA8izbxn98bDGe1MvM",
-  authDomain: "lintas-benteng.firebaseapp.com",
-  databaseURL: "https://lintas-benteng-default-rtdb.firebaseio.com",
-  projectId: "lintas-benteng",
-  storageBucket: "lintas-benteng.firebasestorage.app",
-  messagingSenderId: "1005929757785",
-  appId: "1:1005929757785:web:65b6d25b390677a98f0548",
-  measurementId: "G-647RZ20J14"
-};
-
-const COLLECTION   = 'lintas';
-const OWNER_EMAILS = ['sutannadhif@gmail.com'];
-
-const app  = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db   = getFirestore(app);
-
+const ADMIN_ROLES = ['sysadmin', 'operator', 'pemeriksa', 'pembaca'];
 const $ = (id) => document.getElementById(id);
 const splash = $('splash'), authScreen = $('authScreen'), appEl = $('app'), view = $('view');
 const googleBtn = $('googleBtn'), btnText = $('btnText'), msgBox = $('msgBox');
@@ -199,7 +191,6 @@ let handling = false, routed = false;
 
 const loader = $('loader'), bar = loader.firstElementChild, cover = $('cover');
 let tmr, fb, pct = 0;
-
 window.showLoader = () => {
   clearInterval(tmr); clearTimeout(fb);
   pct = 8;
@@ -207,19 +198,16 @@ window.showLoader = () => {
   requestAnimationFrame(() => { bar.style.transition = 'width .3s ease'; bar.style.width = pct + '%'; });
   loader.classList.add('on'); cover.classList.add('on');
   tmr = setInterval(() => { pct += (90 - pct) * .08; bar.style.width = pct + '%'; }, 200);
-  fb = setTimeout(window.hideLoader, 10000);   // pengaman: maksimal 10 detik
+  fb = setTimeout(window.hideLoader, 10000);
 };
 window.hideLoader = () => {
   clearInterval(tmr); clearTimeout(fb);
   bar.style.width = '100%';
   setTimeout(() => { loader.classList.remove('on'); cover.classList.remove('on'); }, 250);
 };
-
-// halaman di iframe kirim sinyal "siap" setelah datanya tampil
 window.addEventListener('message', (e) => {
   if (e.origin === location.origin && e.data && e.data.lintasReady) window.hideLoader();
 });
-// cadangan: kalau halaman tidak kirim sinyal, buka 3 detik setelah HTML termuat
 view.addEventListener('load', () => { clearTimeout(fb); fb = setTimeout(window.hideLoader, 3000); });
 
 function showAuth() {
@@ -230,31 +218,30 @@ function showAuth() {
   authScreen.classList.add('show');
   routed = false;
   view.removeAttribute('src');
-
   const imgs = [...authScreen.querySelectorAll('.brand-logos img')];
   const go = () => requestAnimationFrame(() => authScreen.classList.add('ready'));
   Promise.all(imgs.map(img => img.decode ? img.decode().catch(() => {}) : Promise.resolve())).then(go);
   setTimeout(go, 3000);
 }
-function showPending(email) {
+function showPending(email, text) {
   splash.style.display = 'none';
   authScreen.classList.add('show', 'ready');
   $('pendingEmail').textContent = email;
+  if (text) $('pendingText').innerHTML = text;
   loginView.style.display = 'none';
   pendingView.classList.add('show');
 }
-function showApp(user, data) {
+function showApp(user, akses) {
   splash.style.display = 'none';
   authScreen.classList.remove('show');
   appEl.classList.add('show');
-
   $('sidebarEmail').textContent = user.email;
   const av = $('avatar');
-  if (data.photoURL) av.innerHTML = `<img src="${data.photoURL}" alt="" referrerpolicy="no-referrer">`;
+  if (user.photoURL) { av.innerHTML = ''; const img = new Image(); img.alt = ''; img.referrerPolicy = 'no-referrer'; img.src = user.photoURL; av.appendChild(img); }
   else av.textContent = (user.email || 'A').charAt(0).toUpperCase();
-
+  window.dzApplyRole(akses.role, LABEL.role[akses.role]);
   feather.replace();
-  if (!routed) { routed = true; window.initRouter(); }   // muat halaman sesuai #hash
+  if (!routed) { routed = true; window.initRouter(); }
 }
 function showMsg(text, type = 'error') { msgBox.textContent = text; msgBox.className = 'msg ' + type; }
 function setLoading(on) {
@@ -263,78 +250,28 @@ function setLoading(on) {
   btnText.textContent = on ? 'Memproses...' : 'Masuk dengan Google';
 }
 
+// Registrasi/otorisasi ditentukan server (dzRegister), bukan klien.
 async function handleUser(user) {
   if (handling) return;
   handling = true;
   setLoading(true);
   msgBox.className = 'msg';
-
-  const isOwner = OWNER_EMAILS.includes(user.email);
-  const ref = doc(db, COLLECTION, user.uid);
-
   try {
-    if (isOwner) {
-      const ownerData = {
-        uid: user.uid, email: user.email,
-        displayName: user.displayName || '', photoURL: user.photoURL || '',
-        role: 'admin', status: 'active'
-      };
-      showApp(user, ownerData);
-      try {
-        const snap = await getDoc(ref);
-        if (!snap.exists()) await setDoc(ref, { ...ownerData, createdAt: serverTimestamp(), lastLogin: serverTimestamp() });
-        else await updateDoc(ref, { ...ownerData, lastLogin: serverTimestamp() });
-      } catch (e) { console.warn('Sync owner ke Firestore gagal:', e.code || e.message); }
-      return;
-    }
-
-    const snap = await getDoc(ref);
-    const email = (user.email || '').toLowerCase();
-    let data;
-
-    // cek undangan kalau akun baru atau masih pending
-    let inv = null;
-    if (!snap.exists() || snap.data().status === 'pending') {
-      try {
-        const is = await getDoc(doc(db, 'lintas_invites', email));
-        if (is.exists()) inv = is.data();
-      } catch (e) { console.warn('Cek undangan gagal:', e.code || e.message); }
-    }
-
-    if (!snap.exists()) {
-      data = {
-        uid: user.uid, email: user.email,
-        displayName: user.displayName || '', photoURL: user.photoURL || '',
-        role: inv?.role || 'user', status: inv ? 'active' : 'pending',
-        createdAt: serverTimestamp(), lastLogin: serverTimestamp()
-      };
-      await setDoc(ref, data);
-    } else {
-      data = snap.data();
-      const patch = {
-        lastLogin: serverTimestamp(),
-        displayName: user.displayName || data.displayName || '',
-        photoURL: user.photoURL || data.photoURL || ''
-      };
-      if (inv) { patch.role = inv.role || 'user'; patch.status = 'active'; data = { ...data, role: patch.role, status: 'active' }; }
-      await updateDoc(ref, patch);
-    }
-    if (inv) await deleteDoc(doc(db, 'lintas_invites', email)).catch(() => {});
-
-    if (data.status === 'blocked') {
-      await signOut(auth); showAuth(); showMsg('Akun kamu diblokir. Hubungi admin.');
-    } else if (data.status !== 'active') {
+    const akses = await call('dzRegister');
+    if (akses.status === 'blocked') {
+      await signOut(auth); showAuth(); showMsg('Akun Anda diblokir. Hubungi administrator.');
+    } else if (akses.status !== 'active') {
       showPending(user.email);
-    } else if (data.role === 'admin') {
-      showApp(user, data);
+    } else if (!ADMIN_ROLES.includes(akses.role)) {
+      showPending(user.email, 'Akun Anda aktif sebagai <b>Anggota</b>. Gunakan <a href="anggota.html" style="color:#93c5fd">Aplikasi Anggota</a> untuk tracking dan laporan.');
     } else {
-      await signOut(auth); showAuth(); showMsg('Akun kamu aktif, tapi halaman ini khusus admin.', 'info');
+      showApp(user, akses);
     }
   } catch (e) {
     console.error(e);
     await signOut(auth).catch(() => {});
     showAuth();
-    showMsg('Gagal memproses akun: ' + (e.code || e.message));
+    showMsg('Gagal memproses akun: ' + errText(e));
   } finally {
     setLoading(false);
     handling = false;
@@ -354,23 +291,36 @@ googleBtn.addEventListener('click', async () => {
       'auth/popup-closed-by-user': 'Login dibatalkan.',
       'auth/cancelled-popup-request': 'Login dibatalkan.',
       'auth/popup-blocked': 'Popup diblokir browser. Izinkan popup lalu coba lagi.',
-      'auth/network-request-failed': 'Koneksi bermasalah. Cek internet kamu.',
+      'auth/network-request-failed': 'Koneksi bermasalah. Periksa internet Anda.',
       'auth/unauthorized-domain': 'Domain ini belum didaftarkan di Firebase Authorized Domains.'
     };
     showMsg(map[e.code] || ('Login gagal: ' + (e.code || e.message)));
   }
 });
 
+// Login email/sandi HANYA untuk emulator lokal (akun uji fiktif); tidak tampil di produksi.
+if (DZ.emulator) {
+  const f = $('devLogin'); f.hidden = false;
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const em = f.elements.email.value.trim(), pw = f.elements.pw.value;
+    try { await signInWithEmailAndPassword(auth, em, pw); }
+    catch { await createUserWithEmailAndPassword(auth, em, pw).catch((x) => showMsg(x.code)); }
+  });
+}
+
 $('pendingLogout').addEventListener('click', () => signOut(auth));
-window.logout = async () => { if (confirm('Yakin mau logout?')) await signOut(auth); };
+window.logout = async () => { if (confirm('Keluar dari Lintas Denzipur?')) await signOut(auth); };
 
 onAuthStateChanged(auth, (user) => {
   if (user) handleUser(user);
   else if (!handling) showAuth();
 });
 
-const tick = () => $('clock').textContent = new Date().toLocaleTimeString('id-ID', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+const tick = () => $('clock').textContent = new Date().toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' WIB';
 setInterval(tick, 1000); tick();
+const net = () => { const d = $('netDot'); d.classList.toggle('off', !navigator.onLine); d.title = navigator.onLine ? 'Browser terhubung ke jaringan' : 'Browser tidak terhubung ke jaringan'; $('netTxt').textContent = navigator.onLine ? 'Online' : 'Offline'; };
+addEventListener('online', net); addEventListener('offline', net); net();
 </script>
 </body>
 </html>

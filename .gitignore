@@ -1,0 +1,14 @@
+node_modules/
+functions/node_modules/
+.firebase/
+*.log
+firebase-debug*.log
+ui-debug.log
+.playwright-mcp/
+# Kredensial tidak boleh masuk repositori
+*service-account*.json
+*-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].json
+.env.*.local
+
+# Pengaturan lokal Claude Code
+.claude/settings.local.json

@@ -1,22 +1,25 @@
 (function () {
   /* ═══════ EDIT MENU DI SINI SAJA ═══════ */
-    const MENU = [
-    { label: 'Main', items: [
-      { href: 'home.html',          icon: 'grid',        text: 'Dashboard' },
+  // roles: peran yang melihat menu (Rules & Functions tetap menegakkan akses di backend).
+  const ALL = ['sysadmin', 'operator', 'pemeriksa', 'pembaca'];
+  const MENU = [
+    { label: 'Utama', items: [
+      { href: 'home.html',          icon: 'grid',        text: 'Dashboard', roles: ALL },
     ]},
-    { label: 'Manajemen', items: [
-      { href: 'admin-manager.html', icon: 'shield',      text: 'Admin Management' },
-      { href: 'user-manager.html',  icon: 'users',       text: 'Manajemen User' },
-      { href: 'kegiatan.html',      icon: 'activity',    text: 'Manajemen Kegiatan' },
-      { href: 'tracking.html',      icon: 'map-pin',     text: 'Tracking' },
-      { href: 'dokumentasi.html',   icon: 'image',       text: 'Dokumentasi' },
+    { label: 'Operasional', items: [
+      { href: 'kegiatan.html',      icon: 'activity',    text: 'Kegiatan', roles: ALL },
+      { href: 'tracking.html',      icon: 'map-pin',     text: 'Tracking', roles: ['sysadmin', 'operator'] },
+      { href: 'laporan.html',       icon: 'file-text',   text: 'Laporan', roles: ['sysadmin', 'operator', 'pemeriksa'] },
+      { href: 'dokumentasi.html',   icon: 'image',       text: 'Dokumentasi', roles: ['sysadmin', 'operator', 'pemeriksa'] },
+      { href: 'rekap.html',         icon: 'bar-chart-2', text: 'Rekap', roles: ALL },
     ]},
-    { label: 'Laporan', items: [
-      { href: 'laporan.html',       icon: 'file-text',   text: 'Laporan Kegiatan' },
-      { href: 'rekap.html',         icon: 'bar-chart-2', text: 'Rekap Data' },
+    { label: 'Personel', items: [
+      { href: 'user-manager.html',  icon: 'users',       text: 'Personel & Akses', roles: ['sysadmin', 'operator'] },
+      { href: 'unit.html',          icon: 'layers',      text: 'Unit', roles: ['sysadmin'] },
     ]},
     { label: 'Sistem', items: [
-      { href: 'pengaturan.html',    icon: 'settings',    text: 'Pengaturan' },
+      { href: 'audit.html',         icon: 'shield',      text: 'Log Audit', roles: ['sysadmin'] },
+      { href: 'pengaturan.html',    icon: 'settings',    text: 'Pengaturan', roles: ALL },
     ]},
   ];
   const DEFAULT_PAGE = 'home';
@@ -40,6 +43,7 @@
   .sidebar-nav{flex:1;padding:16px 12px}
   .nav-label{font-size:9px;font-weight:700;letter-spacing:.15em;color:#555;text-transform:uppercase;padding:8px 12px 6px;margin-top:8px}
   .nav-item{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:#a0a0a0;text-decoration:none;font-size:13.5px;font-weight:500;transition:all .2s;margin-bottom:2px;border:1px solid transparent}
+  .nav-item[hidden],.nav-label[hidden]{display:none}
   .nav-item:hover{color:#e5e5e5;background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.1)}
   .nav-item.active{color:#3b82f6;background:rgba(59,130,246,.1);border-color:rgba(59,130,246,.2)}
   .nav-item svg{width:16px;height:16px;flex-shrink:0;stroke-width:1.8}
@@ -57,7 +61,7 @@
   const nav = MENU.map(g => `
     <div class="nav-label">${g.label}</div>
     ${g.items.map(i => `
-      <a href="${i.href}" class="nav-item" data-page="${i.href === '#' ? '' : norm(i.href)}">
+      <a href="${i.href}" class="nav-item" data-roles="${(i.roles || []).join(' ')}" data-page="${i.href === '#' ? '' : norm(i.href)}">
         <i data-feather="${i.icon}"></i> ${i.text}
       </a>`).join('')}
   `).join('');
@@ -99,8 +103,22 @@
   };
 
   /* ── Navigasi tanpa reload sidebar ── */
+  let role = null;
+  const allowed = (i) => !role || (i.roles || []).includes(role);
+  /** Tampilkan hanya menu sesuai peran; grup kosong disembunyikan. */
+  window.dzApplyRole = (r, label) => {
+    role = r;
+    document.querySelectorAll('.nav-item').forEach(a => { a.hidden = !a.dataset.roles.split(' ').includes(r); });
+    document.querySelectorAll('.nav-label').forEach(l => {
+      let n = l.nextElementSibling, any = false;
+      while (n && !n.classList.contains('nav-label')) { if (!n.hidden) any = true; n = n.nextElementSibling; }
+      l.hidden = !any;
+    });
+    const b = document.querySelector('.sidebar .s-badge'); if (b && label) b.textContent = label;
+  };
+
   function go(page, push) {
-    const item = allItems.find(i => norm(i.href) === page) || allItems.find(i => norm(i.href) === DEFAULT_PAGE);
+    const item = allItems.find(i => norm(i.href) === page && allowed(i)) || allItems.find(i => norm(i.href) === DEFAULT_PAGE);
     if (!item) return;
     const name = norm(item.href);
 

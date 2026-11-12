@@ -1,0 +1,24 @@
+{
+  "indexes": [
+    { "collectionGroup": "akses", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "unitId", "order": "ASCENDING" } ] },
+    { "collectionGroup": "akses", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "role", "order": "ASCENDING" }, { "fieldPath": "status", "order": "ASCENDING" } ] },
+    { "collectionGroup": "kegiatan", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "unitId", "order": "ASCENDING" } ] },
+    { "collectionGroup": "kegiatan", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "unitId", "order": "ASCENDING" }, { "fieldPath": "jadwalMulai", "order": "DESCENDING" } ] },
+    { "collectionGroup": "kegiatan", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "pesertaUids", "arrayConfig": "CONTAINS" }, { "fieldPath": "jadwalMulai", "order": "DESCENDING" } ] },
+    { "collectionGroup": "laporan", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "unitId", "order": "ASCENDING" } ] },
+    { "collectionGroup": "laporan", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "unitId", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "laporan", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "uid", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "lokasi_terkini", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "unitId", "order": "ASCENDING" }, { "fieldPath": "updatedAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "lokasi_terkini", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "unitId", "order": "ASCENDING" } ] },
+    { "collectionGroup": "lokasi_terkini", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "capturedAt", "order": "ASCENDING" } ] },
+    { "collectionGroup": "lokasi_terkini", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "unitId", "order": "ASCENDING" }, { "fieldPath": "capturedAt", "order": "ASCENDING" } ] },
+    { "collectionGroup": "lokasi_terkini", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "updatedAt", "order": "ASCENDING" } ] },
+    { "collectionGroup": "sesi", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "unitId", "order": "ASCENDING" }, { "fieldPath": "mulaiAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "sesi", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "uid", "order": "ASCENDING" }, { "fieldPath": "mulaiAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "sesi", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "selesaiAt", "order": "ASCENDING" } ] },
+    { "collectionGroup": "aktivitas", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "unitId", "order": "ASCENDING" }, { "fieldPath": "at", "order": "DESCENDING" } ] },
+    { "collectionGroup": "audit", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "jenis", "order": "ASCENDING" }, { "fieldPath": "at", "order": "DESCENDING" } ] },
+    { "collectionGroup": "titik_manual", "queryScope": "COLLECTION", "fields": [ { "fieldPath": "unitId", "order": "ASCENDING" }, { "fieldPath": "updatedAt", "order": "DESCENDING" } ] }
+  ],
+  "fieldOverrides": []
+}

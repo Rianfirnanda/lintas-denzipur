@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>if (top === self) location.replace('admin.html#kegiatan');</script>
+<title>Kegiatan</title>
+<link rel="stylesheet" href="page-base.css">
+<link rel="stylesheet" href="theme-light.css">
+<script src="theme.js"></script>
+<style>.peserta{max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:8px;display:grid;gap:4px}
+.peserta label{flex-direction:row!important;align-items:center;gap:8px;font-weight:500!important;color:var(--text)!important}
+.peserta input{width:auto}</style>
+</head>
+<body>
+<div class="page-header row"><div class="grow"><h1>Kegiatan</h1><p>Penjadwalan dan penugasan kegiatan. Status kegiatan terpisah dari status pemeriksaan laporan.</p></div>
+  <button class="btn primary" id="addBtn" hidden>+ Kegiatan</button></div>
+<div class="panel">
+  <div class="form">
+    <label>Unit<select id="fUnit"></select></label>
+    <label>Status<select id="fSt"><option value="">Semua status</option><option value="rencana">Rencana</option><option value="berjalan">Berjalan</option><option value="selesai">Selesai</option><option value="dibatalkan">Dibatalkan</option></select></label>
+    <label>Jadwal dari<input type="date" id="fFrom"></label>
+    <label>Sampai<input type="date" id="fTo"></label>
+    <label>Cari<input id="fQ" type="search" placeholder="Judul / lokasi"></label>
+  </div>
+</div>
+<div class="panel"><div id="state"></div><div class="table-wrap"><table>
+  <thead><tr><th>Jadwal (WIB)</th><th>Kegiatan</th><th>Unit</th><th>Peserta</th><th>Status</th><th>Aksi</th></tr></thead>
+  <tbody id="rows"></tbody></table></div>
+  <div class="acts" style="margin-top:10px"><button class="btn" id="more" hidden>Muat lebih banyak</button></div>
+</div>
+
+<dialog id="dlg"><form id="kf" class="form" method="dialog">
+  <h2 class="wide" id="dlgTitle">Kegiatan</h2>
+  <label class="wide">Nama kegiatan<input name="judul" required minlength="3" maxlength="160"></label>
+  <label class="wide">Uraian<textarea name="deskripsi" rows="2" maxlength="2000"></textarea></label>
+  <label>Unit<select name="unitId" required></select></label>
+  <label>Penanggung jawab<select name="penanggungJawabUid"></select></label>
+  <label>Mulai (WIB)<input name="mulai" type="datetime-local" required></label>
+  <label>Selesai (WIB)<input name="selesai" type="datetime-local"></label>
+  <label class="wide">Lokasi<input name="lokasiNama" maxlength="200" placeholder="Nama lokasi kegiatan"></label>
+  <label>Lintang (opsional)<input name="lokasiLat" type="number" step="any" min="-90" max="90"></label>
+  <label>Bujur (opsional)<input name="lokasiLng" type="number" step="any" min="-180" max="180"></label>
+  <label>Status<select name="status"><option value="rencana">Rencana</option><option value="berjalan">Berjalan</option><option value="selesai">Selesai</option><option value="dibatalkan">Dibatalkan</option></select></label>
+  <label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" name="trackingDiizinkan" style="width:auto" checked> Izinkan tracking sesi</label>
+  <div class="wide"><div class="muted" style="font-size:12px;font-weight:600;margin-bottom:6px">Peserta (personel aktif di unit) <span id="pCount"></span></div><div class="peserta" id="peserta"></div></div>
+  <div class="wide acts" style="justify-content:flex-end"><button class="btn" value="cancel" formnovalidate>Batal</button><button class="btn primary" value="ok">Simpan</button></div>
+  <div class="wide state state-err" id="fErr" hidden></div>
+</form></dialog>
+<div class="toast" id="toast"></div>
+<script type="module">
+import { guard, $, esc, F, db, toast, chip, fmtTime, tsMs, errText, ready, scoped, unitOptions, unitName, stateBox, createListenerScope } from './common.js';
+
+guard(async (ctx) => {
+  const canEdit = ctx.isSys || ctx.akses.role === 'operator';
+  $('addBtn').hidden = !canEdit;
+  $('fUnit').innerHTML = await unitOptions(ctx);
+  const iso = (d) => new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  $('fFrom').value = iso(new Date(Date.now() - 30 * 864e5)); $('fTo').value = iso(new Date(Date.now() + 60 * 864e5));
+  const subs = createListenerScope();
+  let rows = [], limitN = 50, editing = null, unitNames = {};
+
+  function subscribe() {
+    subs.clear();
+    stateBox($('state'), 'loading', 'Memuat kegiatan…');
+    const a = new Date($('fFrom').value + 'T00:00:00+07:00'), b = new Date($('fTo').value + 'T23:59:59+07:00');
+    const qy = F.query(scoped(F.collection(db, 'kegiatan'), ctx, 'unitId', $('fUnit').value),
+      F.where('jadwalMulai', '>=', F.Timestamp.fromDate(a)), F.where('jadwalMulai', '<=', F.Timestamp.fromDate(b)), F.orderBy('jadwalMulai', 'desc'), F.limit(limitN));
+    subs.add(F.onSnapshot(qy, async (s) => {
+      rows = s.docs.map((d) => ({ id: d.id, ...d.data() }));
+      for (const r of rows) unitNames[r.unitId] ??= await unitName(r.unitId);
+      $('more').hidden = s.size < limitN;
+      $('state').innerHTML = ''; draw(); ready();
+    }, (e) => { stateBox($('state'), 'err', 'Gagal memuat: ' + errText(e), subscribe); ready(); }));
+  }
+  function draw() {
+    const st = $('fSt').value, q = $('fQ').value.trim().toLowerCase();
+    const list = rows.filter((r) => (!st || r.status === st) && (!q || `${r.judul} ${r.lokasiNama}`.toLowerCase().includes(q)));
+    $('rows').innerHTML = list.map((r) => {
+      const act = (s, t, c = '') => `<button class="btn ${c}" data-st="${s}" data-id="${esc(r.id)}">${t}</button>`;
+      const edit = canEdit ? [
+        `<button class="btn pr" data-edit="${esc(r.id)}" ${['selesai', 'dibatalkan'].includes(r.status) ? 'disabled title="Kegiatan final"' : ''}>Ubah</button>`,
+        r.status === 'rencana' ? act('berjalan', 'Mulai', 'ok') : '',
+        r.status === 'berjalan' ? act('selesai', 'Selesai', 'ok') : '',
+        ['rencana', 'berjalan'].includes(r.status) ? act('dibatalkan', 'Batalkan', 'wn') : '',
+        r.status === 'rencana' ? `<button class="btn dg" data-del="${esc(r.id)}">Hapus</button>` : '',
+      ].join('') : '<span class="muted">Hanya baca</span>';
+      return `<tr><td>${fmtTime(tsMs(r.jadwalMulai))}${r.jadwalSelesai ? '<br><small class="muted">s.d. ' + fmtTime(tsMs(r.jadwalSelesai)) + '</small>' : ''}</td>
+        <td><b>${esc(r.judul)}</b><br><small class="muted">${esc(r.lokasiNama || '')}${r.trackingDiizinkan ? '' : ' · tracking nonaktif'}</small></td>
+        <td>${esc(unitNames[r.unitId] || r.unitId)}</td><td>${(r.pesertaUids || []).length}</td><td>${chip('kegiatan', r.status)}</td>
+        <td><div class="acts">${edit}</div></td></tr>`;
+    }).join('') || '<tr><td colspan="6" class="empty">Tidak ada kegiatan pada filter ini. ' + (canEdit ? 'Tekan “+ Kegiatan” untuk menambah.' : '') + '</td></tr>';
+  }
+
+  async function loadPeserta(unitId, selected = []) {
+    $('peserta').innerHTML = '<span class="spin"></span>';
+    const f = $('kf');
+    try {
+      const s = await F.getDocs(F.query(F.collection(db, 'personel'), F.where('unitId', '==', unitId), F.limit(300)));
+      const list = s.docs.map((d) => ({ id: d.id, ...d.data() })).filter((p) => p.statusKeanggotaan === 'aktif' || selected.includes(p.id)).sort((a, b) => (a.nama || '').localeCompare(b.nama || ''));
+      $('peserta').innerHTML = list.map((p) => `<label><input type="checkbox" name="peserta" value="${esc(p.id)}" ${selected.includes(p.id) ? 'checked' : ''}> ${esc(p.pangkat)} ${esc(p.nama)} <small class="muted">${esc(p.jabatan || '')}</small></label>`).join('') || '<span class="muted">Belum ada personel di unit ini.</span>';
+      f.penanggungJawabUid.innerHTML = '<option value="">—</option>' + list.map((p) => `<option value="${esc(p.id)}">${esc(p.pangkat)} ${esc(p.nama)}</option>`).join('');
+      if (editing?.penanggungJawabUid) f.penanggungJawabUid.value = editing.penanggungJawabUid;
+      const cnt = () => ($('pCount').textContent = `(${$('peserta').querySelectorAll('input:checked').length} dipilih)`);
+      $('peserta').onchange = cnt; cnt();
+    } catch (e) { $('peserta').innerHTML = `<span class="muted">Gagal memuat personel: ${esc(errText(e))}</span>`; }
+  }
+  const toLocal = (ms) => (ms ? new Date(ms + 7 * 3600_000).toISOString().slice(0, 16) : '');
+  const fromLocal = (v) => (v ? F.Timestamp.fromDate(new Date(v + ':00+07:00')) : null);
+
+  async function openForm(r = null) {
+    editing = r;
+    const f = $('kf'); f.reset(); $('fErr').hidden = true;
+    $('dlgTitle').textContent = r ? 'Ubah Kegiatan' : 'Kegiatan Baru';
+    f.unitId.innerHTML = await unitOptions(ctx, { all: false, selected: r?.unitId || $('fUnit').value });
+    f.unitId.disabled = !!r && !ctx.isSys;
+    if (r) {
+      f.judul.value = r.judul; f.deskripsi.value = r.deskripsi || ''; f.lokasiNama.value = r.lokasiNama || '';
+      f.lokasiLat.value = r.lokasiLat ?? ''; f.lokasiLng.value = r.lokasiLng ?? '';
+      f.mulai.value = toLocal(tsMs(r.jadwalMulai)); f.selesai.value = toLocal(tsMs(r.jadwalSelesai));
+      f.status.value = r.status; f.trackingDiizinkan.checked = r.trackingDiizinkan !== false;
+    }
+    await loadPeserta(f.unitId.value, r?.pesertaUids || []);
+    $('dlg').showModal();
+  }
+  $('kf').unitId.onchange = (e) => loadPeserta(e.target.value, []);
+  $('addBtn').onclick = () => openForm();
+  $('kf').addEventListener('submit', async (e) => {
+    if (e.submitter?.value !== 'ok') return;
+    e.preventDefault();
+    const f = e.target, err = (t) => { $('fErr').textContent = t; $('fErr').hidden = false; };
+    const lat = f.lokasiLat.value === '' ? null : +f.lokasiLat.value, lng = f.lokasiLng.value === '' ? null : +f.lokasiLng.value;
+    if ((lat == null) !== (lng == null)) return err('Isi lintang dan bujur bersamaan, atau kosongkan keduanya.');
+    const mulai = fromLocal(f.mulai.value), selesai = fromLocal(f.selesai.value);
+    if (selesai && selesai.toMillis() < mulai.toMillis()) return err('Waktu selesai harus setelah waktu mulai.');
+    const peserta = [...f.querySelectorAll('input[name=peserta]:checked')].map((x) => x.value);
+    if (peserta.length > 200) return err('Maksimal 200 peserta.');
+    const data = {
+      judul: f.judul.value.trim(), deskripsi: f.deskripsi.value.trim(), unitId: f.unitId.value, penanggungJawabUid: f.penanggungJawabUid.value || null,
+      pesertaUids: peserta, jadwalMulai: mulai, jadwalSelesai: selesai, lokasiNama: f.lokasiNama.value.trim(), lokasiLat: lat, lokasiLng: lng,
+      status: f.status.value, trackingDiizinkan: f.trackingDiizinkan.checked, updatedBy: ctx.uid, updatedAt: F.serverTimestamp(),
+    };
+    try {
+      if (editing) await F.updateDoc(F.doc(db, 'kegiatan', editing.id), data);
+      else await F.addDoc(F.collection(db, 'kegiatan'), { ...data, createdBy: ctx.uid, createdAt: F.serverTimestamp() });
+      $('dlg').close(); toast('Kegiatan disimpan.');
+    } catch (x) { err('Gagal menyimpan: ' + errText(x)); }
+  });
+  $('rows').onclick = async (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    const r = rows.find((x) => x.id === (b.dataset.id || b.dataset.edit || b.dataset.del)); if (!r) return;
+    if (b.dataset.edit) return openForm(r);
+    if (b.dataset.del) { if (!confirm(`Hapus kegiatan "${r.judul}"?`)) return; try { await F.deleteDoc(F.doc(db, 'kegiatan', r.id)); toast('Kegiatan dihapus.'); } catch (x) { toast(errText(x), 'err'); } return; }
+    if (b.dataset.st) {
+      if (['selesai', 'dibatalkan'].includes(b.dataset.st) && !confirm(`Ubah status "${r.judul}" menjadi ${b.textContent}? Status ini final.`)) return;
+      try { await F.updateDoc(F.doc(db, 'kegiatan', r.id), { status: b.dataset.st, updatedBy: ctx.uid, updatedAt: F.serverTimestamp() }); toast('Status diperbarui.'); }
+      catch (x) { toast('Gagal: ' + errText(x), 'err'); }
+    }
+  };
+  $('fUnit').onchange = $('fFrom').onchange = $('fTo').onchange = () => { limitN = 50; subscribe(); };
+  $('fSt').onchange = draw; $('fQ').oninput = draw;
+  $('more').onclick = () => { limitN += 50; subscribe(); };
+  addEventListener('pagehide', () => subs.clear());
+  subscribe();
+});
+</script>
+</body>
+</html>
