@@ -13,8 +13,8 @@ if (!PROJECT.startsWith('demo-')) throw new Error('Uji hanya boleh berjalan pada
 for (const v of ['FIRESTORE_EMULATOR_HOST', 'FIREBASE_AUTH_EMULATOR_HOST']) {
   if (!process.env[v]) throw new Error(`${v} tidak diset — jalankan lewat "npm run test:emu".`);
 }
-export const DB_ID = 'denzipur';
-export const BUCKET = 'demo-denzipur-docs';
+export const DB_ID = '(default)';
+export const BUCKET = 'demo-denzipur.appspot.com';
 const FS = process.env.FIRESTORE_EMULATOR_HOST;
 const AUTH = process.env.FIREBASE_AUTH_EMULATOR_HOST;
 

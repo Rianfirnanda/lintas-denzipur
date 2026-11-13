@@ -8,7 +8,7 @@ import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
 
 initializeApp({ projectId: PROJECT });
-const db = getFirestore('denzipur');
+const db = getFirestore();
 const auth = getAuth();
 const PW = 'uji-emulator-123';
 

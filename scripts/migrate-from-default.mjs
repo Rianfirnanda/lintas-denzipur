@@ -1,27 +1,30 @@
-// Migrasi data Denzipur LAMA (database Firestore default, dipakai bersama Lintas Benteng)
-// ke database bernama "denzipur". Aman & dapat diulang:
+// Migrasi data Denzipur LAMA dari project Lintas Benteng (database default, dipakai bersama Benteng)
+// ke project Denzipur. Aman & dapat diulang:
 //  - Default --dry-run: hanya membaca dan mencetak rencana. Tidak menulis apa pun.
-//  - --apply: menulis ke database "denzipur" dengan ID deterministik (legacy_<id>); menjalankan ulang tidak menggandakan.
-//  - TIDAK PERNAH menghapus/mengubah data di database default (data Lintas Benteng tidak disentuh).
-//  - Kredensial: Application Default Credentials (gcloud auth application-default login) milik operator.
-//    Jangan simpan service-account key di repositori.
+//  - --apply: menulis HANYA ke project tujuan dengan ID deterministik (legacy_<id>); menjalankan ulang tidak menggandakan.
+//  - Project sumber (Lintas Benteng) hanya DIBACA: tidak ada operasi tulis/hapus ke sana di skrip ini.
+//  - Kredensial: Application Default Credentials (gcloud auth application-default login) milik operator,
+//    dengan akses baca Firestore di project sumber. Jangan simpan service-account key di repositori.
 //
 // Pemakaian:
-//   node scripts/migrate-from-default.mjs --project lintas-benteng --dry-run
-//   node scripts/migrate-from-default.mjs --project lintas-benteng --apply --unit-default UNIT-ID
+//   node scripts/migrate-from-default.mjs --source lintas-benteng --target lintas-denzipur --dry-run
+//   node scripts/migrate-from-default.mjs --source lintas-benteng --target lintas-denzipur --apply --unit-default UNIT-ID
 import { initializeApp, applicationDefault } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 
 const arg = (k, d = null) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
 const APPLY = process.argv.includes('--apply');
-const PROJECT = arg('--project');
+const SOURCE = arg('--source');
+const TARGET = arg('--target');
 const UNIT_DEFAULT = arg('--unit-default', 'TANPA_UNIT');
-if (!PROJECT) { console.error('Wajib: --project <id>'); process.exit(1); }
+if (!SOURCE || !TARGET) { console.error('Wajib: --source <project-benteng> --target <project-denzipur>'); process.exit(1); }
+if (SOURCE === TARGET) { console.error('Project sumber dan tujuan tidak boleh sama.'); process.exit(1); }
 if (APPLY && process.argv.includes('--dry-run')) { console.error('Pilih salah satu: --dry-run atau --apply'); process.exit(1); }
 
-initializeApp({ credential: applicationDefault(), projectId: PROJECT });
-const src = getFirestore();             // database default (Benteng + Denzipur lama) — HANYA DIBACA
-const dst = getFirestore('denzipur');   // database Denzipur baru
+const srcApp = initializeApp({ credential: applicationDefault(), projectId: SOURCE }, 'sumber');
+const dstApp = initializeApp({ credential: applicationDefault(), projectId: TARGET }, 'tujuan');
+const src = getFirestore(srcApp);   // project Lintas Benteng — HANYA DIBACA
+const dst = getFirestore(dstApp);   // project Denzipur — satu-satunya tujuan penulisan
 
 const plan = { akses: [], laporan: [], titikManual: [], dilewati: [] };
 const ms = (d) => d.createdAt?.toMillis?.() ?? (typeof d.createdAt === 'number' ? d.createdAt : null) ?? (d.createdAtServer?.toMillis?.() ?? d.tanggalMillis ?? null);
@@ -66,7 +69,7 @@ for (const d of man.docs) {
   plan.titikManual.push({ id: `legacy_${d.id}`, nama: String(x.nama || 'Titik lama').slice(0, 120), keterangan: String(x.keterangan || '').slice(0, 500), unitId: UNIT_DEFAULT, kegiatanId: null, lat, lng });
 }
 
-console.log(`Mode: ${APPLY ? 'APPLY (menulis ke database "denzipur")' : 'DRY-RUN (tidak menulis)'}`);
+console.log(`Mode: ${APPLY ? `APPLY (menulis ke project ${TARGET})` : 'DRY-RUN (tidak menulis)'}`);
 console.log(`Akun: ${plan.akses.length} (sysadmin: ${plan.akses.filter((a) => a.role === 'sysadmin').length})`);
 console.log(`Laporan lama: ${plan.laporan.length} (dengan lokasi: ${plan.laporan.filter((l) => l.lokasi).length}, dengan foto lama: ${plan.laporan.filter((l) => l.fotoUrlLama).length})`);
 console.log(`Titik manual: ${plan.titikManual.length}`);
@@ -88,6 +91,6 @@ for (const l of plan.laporan) {
   w++;
 }
 for (const t of plan.titikManual) { const { id, ...rest } = t; writer.set(dst.doc(`titik_manual/${id}`), { ...rest, createdBy: 'migrasi', updatedAt: Timestamp.now() }, { merge: true }); w++; }
-writer.set(dst.collection('audit').doc(), { jenis: 'migrasi', actorUid: 'skrip', unitId: null, ringkasan: `Migrasi dari database default: ${plan.akses.length} akun, ${plan.laporan.length} laporan, ${plan.titikManual.length} titik manual`, target: null, detail: null, at: Timestamp.now() });
+writer.set(dst.collection('audit').doc(), { jenis: 'migrasi', actorUid: 'skrip', unitId: null, ringkasan: `Migrasi dari project ${SOURCE}: ${plan.akses.length} akun, ${plan.laporan.length} laporan, ${plan.titikManual.length} titik manual`, target: null, detail: null, at: Timestamp.now() });
 await writer.close();
-console.log(`Selesai: ${w} penulisan. Data di database default tidak diubah.`);
+console.log(`Selesai: ${w} penulisan. Project sumber ${SOURCE} hanya dibaca.`);

@@ -1,5 +1,5 @@
 rules_version = '2';
-// Rules untuk bucket khusus dokumentasi Denzipur (bukan bucket default Lintas Benteng).
+// Rules untuk bucket default project lintas-denzipur (terpisah dari project Lintas Benteng).
 // Otorisasi memakai custom claim "dz" yang diset Cloud Functions saat akses berubah.
 // File dibaca lewat SDK (getBlob/getBytes) dengan autentikasi, bukan tautan publik bertoken.
 service firebase.storage {

@@ -1,24 +1,6 @@
 {
   "projects": {
-    "default": "lintas-benteng",
+    "default": "lintas-denzipur",
     "demo": "demo-denzipur"
-  },
-  "targets": {
-    "lintas-benteng": {
-      "hosting": {
-        "denzipur": ["lintas-denzipur"]
-      },
-      "storage": {
-        "denzipur-docs": ["lintas-benteng-denzipur"]
-      }
-    },
-    "demo-denzipur": {
-      "hosting": {
-        "denzipur": ["demo-denzipur"]
-      },
-      "storage": {
-        "denzipur-docs": ["demo-denzipur-docs"]
-      }
-    }
   }
 }

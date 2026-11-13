@@ -1,6 +1,32 @@
 # Arsitektur Lintas Denzipur
 
-## Keputusan arsitektur (ADR-001): isolasi di dalam project `lintas-benteng`
+## Keputusan arsitektur (ADR-002): project Firebase terpisah `lintas-denzipur`
+
+**Status:** berlaku sejak 13 Nov 2026, menggantikan ADR-001 di bawah.
+
+**Alasan.** Akun pengembang tidak memiliki izin membuat resource (database, bucket, situs) di project `lintas-benteng`; percobaan membuat database ditolak dengan HTTP 403 tanpa perubahan apa pun. Pemilik ingin database Lintas Benteng **tidak tersentuh sama sekali**. Project terpisah memberi isolasi penuh dan dimiliki langsung oleh pengembang.
+
+**Keputusan.** Semua komponen Denzipur berada di project `lintas-denzipur`:
+
+| Lapisan | Lintas Benteng (`lintas-benteng`, tidak disentuh) | Lintas Denzipur (`lintas-denzipur`) |
+|---|---|---|
+| Firestore | database `(default)` milik Benteng | database `(default)` milik project Denzipur |
+| Storage | bucket `lintas-benteng.firebasestorage.app` | bucket `lintas-denzipur.firebasestorage.app` |
+| Functions | codebase `default` (10 fungsi Benteng) | codebase `denzipur`, semua fungsi berawalan `dz` |
+| Hosting | situs `lintas-benteng` | situs `lintas-denzipur` |
+| Auth | daftar akun Benteng | daftar akun Denzipur tersendiri (login tetap dengan akun Google) |
+
+**Konsekuensi.**
+- Tidak ada perintah deploy di repositori ini yang dapat menargetkan `lintas-benteng`; `.firebaserc` hanya berisi `lintas-denzipur` dan `demo-denzipur` (emulator).
+- Personel mendaftar sekali di Denzipur lalu disetujui administrator (alur yang memang sudah berlaku). Klaim `dz` hanya ada di akun Auth project Denzipur.
+- Project Denzipur butuh paket Blaze sendiri (Cloud Functions, Scheduler, bucket Storage baru). Kuota gratis Firestore berlaku untuk database `(default)`-nya.
+- Data Denzipur lama di project Benteng tidak dipindah otomatis. `scripts/migrate-from-default.mjs` hanya **membaca** project Benteng dan menulis ke project Denzipur, dan hanya dijalankan manual dengan persetujuan.
+- Logo masih dimuat dari tautan publik di bucket Benteng (hanya dibaca oleh browser). Sebaiknya dipindahkan ke project Denzipur.
+- Folder `/denzipur` di situs Benteng tetap menjalankan kode lama sampai pemiliknya mengganti dengan redirect.
+
+Bagian di bawah yang menyebut database bernama `denzipur` atau bucket `lintas-benteng-denzipur` mengacu ke ADR-001; padanannya sekarang adalah database `(default)` dan bucket default project `lintas-denzipur`. Model data, Rules, dan matriks hak akses tidak berubah.
+
+## ADR-001 (digantikan): isolasi di dalam project `lintas-benteng`
 
 **Temuan awal.**
 - Admin Denzipur lama menulis profil login ke koleksi `lintas` di database Firestore **default**. Koleksi itu juga dibaca dan ditulis Lintas Benteng.

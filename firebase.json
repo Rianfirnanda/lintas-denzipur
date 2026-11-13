@@ -1,17 +1,11 @@
 {
-  "firestore": [
-    {
-      "database": "denzipur",
-      "rules": "firestore.rules",
-      "indexes": "firestore.indexes.json"
-    }
-  ],
-  "storage": [
-    {
-      "target": "denzipur-docs",
-      "rules": "storage.rules"
-    }
-  ],
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
   "functions": [
     {
       "source": "functions",
@@ -22,7 +16,6 @@
   ],
   "hosting": [
     {
-      "target": "denzipur",
       "public": "public",
       "cleanUrls": false,
       "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],

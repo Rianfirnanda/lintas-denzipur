@@ -4,7 +4,7 @@ Administrasi personel, kegiatan rutin, laporan, dokumentasi, dan tracking berbas
 
 - **Admin**: `public/admin.html`. Dashboard, Kegiatan, Tracking (Live / Riwayat Sesi / Lokasi Laporan & Titik Manual), Laporan, Dokumentasi, Rekap, Personel & Akses, Unit, Log Audit, Pengaturan.
 - **Aplikasi anggota**: `public/anggota.html`. Tracking berbasis sesi (aplikasi web) dan laporan kegiatan berfoto.
-- **Backend**: Firestore database bernama `denzipur`, Storage bucket khusus, dan Cloud Functions codebase `denzipur`.
+- **Backend**: project Firebase tersendiri `lintas-denzipur` (Firestore, Storage, Cloud Functions, Hosting), terpisah total dari project Lintas Benteng.
 
 ## Mulai cepat (lokal, emulator — tanpa menyentuh produksi)
 ```bash
@@ -38,5 +38,5 @@ npm run check
 
 ## Aturan penting
 - Jangan menyimpan service-account key, token, atau kredensial di repositori atau frontend. `public/js/config.js` hanya berisi konfigurasi web Firebase yang memang publik.
-- Selalu deploy dengan `--only` sesuai target di DEPLOY.md, karena project ini dipakai bersama Lintas Benteng.
+- Selalu deploy dengan `--only` dan `--project lintas-denzipur` sesuai DEPLOY.md. Repositori ini tidak berisi target ke project Lintas Benteng.
 - Pengujian hanya memakai emulator dengan project `demo-denzipur` dan data fiktif.

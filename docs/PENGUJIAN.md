@@ -75,6 +75,6 @@ Tangkapan layar ada di `docs/screenshots/`.
 ## Belum terverifikasi
 - Perangkat fisik Android/iOS: GPS nyata, layar terkunci, tab di latar belakang, Safari iOS.
 - Login Google sungguhan (popup). Di emulator dipakai login email/sandi khusus emulator.
-- Deploy dan perilaku di project produksi `lintas-benteng`: CLI tidak memiliki kredensial (lihat [DEPLOY.md](DEPLOY.md)).
+- Deploy dan perilaku di project produksi `lintas-denzipur`: belum di-deploy (menunggu paket Blaze dan aktivasi layanan; lihat [DEPLOY.md](DEPLOY.md)).
 - Indexes komposit hanya diverifikasi di emulator (emulator tidak mewajibkan index); produksi bisa meminta index tambahan.
-- Trigger `onDocumentWritten` pada database bernama dan Cloud Scheduler di produksi.
+- Trigger `onDocumentWritten` dan Cloud Scheduler di produksi.

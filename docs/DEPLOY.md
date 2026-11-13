@@ -1,40 +1,35 @@
 # Setup, Deployment, Migrasi & Rollback
 
-> **Status:** belum pernah di-deploy. Firebase CLI di mesin ini belum login (`No authorized accounts`), sehingga target produksi belum dapat diverifikasi. Jangan menjalankan perintah produksi sebelum prasyarat di bawah dicek.
+> **Target:** project Firebase **`lintas-denzipur`** (terpisah dari Lintas Benteng). Repositori ini tidak berisi target ke project `lintas-benteng`, sehingga deploy dari sini tidak dapat menyentuh database, Rules, Functions, atau Hosting Lintas Benteng.
 
 ## Target
-| Komponen | Target | Catatan |
-|---|---|---|
-| Project | `lintas-benteng` | `.firebaserc` alias `default` |
-| Firestore | database **`denzipur`**, lokasi `asia-southeast2` | harus dibuat dulu; Rules & indexes hanya untuk database ini |
-| Storage | bucket **`lintas-benteng-denzipur`** (target `denzipur-docs`) | harus dibuat dulu; Rules hanya untuk bucket ini |
-| Functions | codebase **`denzipur`**, region `asia-southeast2`, Node 22 | fungsi `dz*`; tidak menyentuh codebase lain |
-| Hosting | situs **`lintas-denzipur`** (target `denzipur`) → `public/` | situs Benteng tidak disentuh |
+| Komponen | Target |
+|---|---|
+| Project | `lintas-denzipur` (`.firebaserc` alias `default`) |
+| Firestore | database `(default)` project `lintas-denzipur`, lokasi `asia-southeast2` |
+| Storage | bucket default `lintas-denzipur.firebasestorage.app` |
+| Functions | codebase `denzipur`, region `asia-southeast2`, Node 22 |
+| Hosting | situs `lintas-denzipur` → `https://lintas-denzipur.web.app` |
 
-## Prasyarat (sekali, oleh pemilik project)
-1. Paket **Blaze**: dibutuhkan untuk Functions, database bernama, bucket tambahan, dan Scheduler.
-2. Login:
-   ```bash
-   firebase login
-   ```
-   ```bash
-   firebase use default
-   ```
-3. Buat database:
-   ```bash
-   firebase firestore:databases:create denzipur --location=asia-southeast2
-   ```
-4. Buat bucket `lintas-benteng-denzipur` di lokasi `asia-southeast2`: Firebase Console → Storage → Add bucket.
-5. Buat situs Hosting:
-   ```bash
-   firebase hosting:sites:create lintas-denzipur
-   ```
-6. Tambahkan `lintas-denzipur.web.app` ke Auth → Settings → **Authorized domains**.
-7. Isi `functions/.env`: `DZ_BOOTSTRAP_ADMINS` = email Google administrator pertama. Contoh tanpa rahasia ada di `.env.example`.
-8. Opsional, App Check:
+## Prasyarat (sekali)
+Sudah selesai:
+- Project `lintas-denzipur` dibuat.
+- Aplikasi web "Lintas Denzipur Web" terdaftar; konfigurasinya ada di `public/js/config.js`.
+
+Belum selesai (dikerjakan pemilik project lewat Firebase Console):
+1. **Upgrade ke paket Blaze** (pojok kiri bawah → Upgrade). Dibutuhkan untuk Cloud Functions, Cloud Scheduler, dan bucket Storage. Disarankan memasang *budget alert* di Google Cloud Billing.
+2. **Authentication → Get started → Sign-in method → Google → Enable.** Domain `lintas-denzipur.web.app` dan `lintas-denzipur.firebaseapp.com` otomatis masuk Authorized domains.
+3. **Firestore Database → Create database**: lokasi `asia-southeast2 (Jakarta)`, mode **production**. Lokasi tidak bisa diubah.
+4. **Storage → Get started**: lokasi `asia-southeast2`, mode **production**.
+5. Periksa `functions/.env`: `DZ_BOOTSTRAP_ADMINS` berisi email Google administrator pertama.
+6. Opsional, App Check:
    - Daftarkan reCAPTCHA Enterprise dan isi `appCheckSiteKey` di `public/js/config.js`.
-   - Pantau metrik terlebih dahulu.
-   - Setelah semua klien mengirim token, set `DZ_ENFORCE_APP_CHECK=true`.
+   - Pantau metriknya dulu, lalu set `DZ_ENFORCE_APP_CHECK=true` setelah semua klien mengirim token.
+
+Langkah 3 dan 4 juga bisa dijalankan lewat CLI setelah login:
+```bash
+firebase firestore:databases:create "(default)" --location=asia-southeast2 --delete-protection=ENABLED --project lintas-denzipur
+```
 
 ## Pemeriksaan sebelum deploy
 ```bash
@@ -51,56 +46,54 @@ npm run check
 ```
 
 ## Perintah deploy (urutan aman)
+Functions di-deploy **sebelum** Hosting, karena halaman login memanggil `dzRegister`.
 ```bash
-firebase deploy --only firestore:denzipur
+firebase deploy --only firestore --project lintas-denzipur
 ```
 ```bash
-firebase deploy --only storage:denzipur-docs
+firebase deploy --only storage --project lintas-denzipur
 ```
 ```bash
-firebase deploy --only functions:denzipur
+firebase deploy --only functions:denzipur --project lintas-denzipur
 ```
 ```bash
-firebase deploy --only hosting:denzipur
+firebase deploy --only hosting --project lintas-denzipur
 ```
-Indexes komposit perlu beberapa menit untuk dibangun. Query yang membutuhkannya akan gagal sampai index berstatus *Enabled*.
+Indexes komposit perlu beberapa menit untuk dibangun. Query yang membutuhkannya gagal sampai index berstatus *Enabled*.
 
-**Jangan** menjalankan `firebase deploy` tanpa `--only`, dan jangan men-deploy Rules ke database `(default)` dari repositori ini.
+Selalu sertakan `--project lintas-denzipur` agar target terlihat jelas di setiap perintah.
 
 ## Migrasi data lama (opsional, manual)
-Data Denzipur lama berada di database default: `lintas`, `users` dengan role `user-denzipur`, `lintas_kegiatan`, dan `lintas_tracking`.
+Data Denzipur lama ada di project `lintas-benteng` (database default): koleksi `lintas`, `users` dengan role `user-denzipur`, `lintas_kegiatan`, dan `lintas_tracking`. Skrip **hanya membaca** project Benteng dan menulis ke project Denzipur.
 
-1. Siapkan kredensial operator. Jangan memakai file service-account dari folder Downloads dan jangan menyimpannya di repositori.
+1. Siapkan kredensial operator dengan akses baca Firestore di project `lintas-benteng`. Jangan memakai file service-account dari folder Downloads dan jangan menyimpannya di repositori.
    ```bash
    gcloud auth application-default login
    ```
-2. Jalankan dry-run (hanya membaca):
+2. Dry-run (tidak menulis apa pun):
    ```bash
-   node scripts/migrate-from-default.mjs --project lintas-benteng --dry-run
+   node scripts/migrate-from-default.mjs --source lintas-benteng --target lintas-denzipur --dry-run
    ```
-3. Tinjau angka hasil dry-run, lalu terapkan:
+3. Setelah angka dari dry-run ditinjau, terapkan:
    ```bash
-   node scripts/migrate-from-default.mjs --project lintas-benteng --apply --unit-default <UNIT-ID>
+   node scripts/migrate-from-default.mjs --source lintas-benteng --target lintas-denzipur --apply --unit-default <UNIT-ID>
    ```
 
 Sifat migrasi:
-- **Idempoten**: ID `legacy_<id>`, dan akses yang sudah ada tidak ditimpa.
-- **Tidak mengubah atau menghapus** data di database default.
-- Admin lama menjadi `sysadmin`. Anggota lama dimigrasikan sebagai **pending** agar unitnya ditetapkan.
-- Laporan lama menjadi status Diajukan dengan `legacy: true`. Foto lama tetap berupa `fotoUrlLama` (URL bertoken di bucket Benteng) dan tidak disalin.
+- Idempoten: ID `legacy_<id>`, dan akses yang sudah ada tidak ditimpa.
+- Admin lama menjadi `sysadmin`; anggota lama masuk sebagai **pending** agar unitnya ditetapkan.
+- Laporan lama menjadi status Diajukan dengan `legacy: true`. Foto lama tetap berupa `fotoUrlLama` (URL bertoken di bucket Benteng), tidak disalin.
+- Akun `akses` lama memakai UID dari project Benteng. UID di project Denzipur berbeda, sehingga akun hasil migrasi hanya bernilai sebagai catatan riwayat; personel tetap mendaftar ulang di Denzipur.
 
 ## Peralihan dari `/denzipur` lama
-Setelah situs baru berjalan, ganti `public/denzipur/` pada repositori Hosting Benteng dengan redirect ke `https://lintas-denzipur.web.app/admin.html`. Langkah ini dilakukan di repositori Benteng, bukan di sini. Sampai saat itu, halaman lama tetap berjalan dengan data lama dan tidak terpengaruh deploy ini.
-
-Pembersihan dokumen Denzipur di koleksi Benteng (`users` dengan role `user-denzipur`, `lintas`) **tidak** otomatis. Lakukan manual setelah migrasi disetujui.
+Halaman lama di `lintas-benteng.web.app/denzipur/` dikelola dari repositori Hosting Lintas Benteng. Pemilik project Benteng dapat menggantinya dengan redirect ke `https://lintas-denzipur.web.app/admin.html`. Itu tidak dilakukan dari repositori ini.
 
 ## Rollback
-| Komponen | Cara | Dampak data |
+| Komponen | Cara | Dampak |
 |---|---|---|
-| Hosting | `firebase hosting:rollback` (pilih situs `lintas-denzipur`) atau Console → Release history | tidak ada |
-| Functions | deploy ulang commit sebelumnya dengan `--only functions:denzipur`; menghapus semua: `firebase functions:delete <nama> --region asia-southeast2` | sesi yang sedang aktif tidak bisa mengirim titik sampai fungsi kembali; antrean klien menyimpan titik (maks. `maxQueue`) |
-| Firestore Rules | Console → Firestore (database `denzipur`) → Rules → riwayat versi | Rules hanya berlaku untuk database `denzipur`; tidak memengaruhi Benteng |
-| Storage Rules | Console → Storage (bucket denzipur) → Rules → riwayat | sama |
-| Seluruh Denzipur | kembalikan redirect `/denzipur` ke kode lama | data baru tetap di database `denzipur`; data lama tidak pernah diubah |
+| Hosting | `firebase hosting:rollback --project lintas-denzipur` atau Console → Hosting → Release history | tidak ada dampak data |
+| Functions | deploy ulang commit sebelumnya dengan `--only functions:denzipur`, atau hapus: `firebase functions:delete <nama> --region asia-southeast2 --project lintas-denzipur` | selama fungsi tidak tersedia, titik tracking tertahan di antrean perangkat (maks. `maxQueue`) |
+| Firestore Rules | Console → Firestore → Rules → riwayat versi | hanya project Denzipur |
+| Storage Rules | Console → Storage → Rules → riwayat versi | hanya project Denzipur |
 
-Kompatibilitas: klien lama (folder `/denzipur` di situs Benteng) membaca dan menulis database default, sehingga tidak terpengaruh Rules baru. Klien baru membutuhkan Functions yang sudah ter-deploy, jadi deploy Functions **sebelum** Hosting.
+Lintas Benteng tidak terdampak oleh langkah rollback mana pun.

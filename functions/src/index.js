@@ -15,7 +15,7 @@ import {
 } from './core.js';
 
 const REGION = process.env.DZ_REGION || 'asia-southeast2';
-const DB_ID = process.env.DZ_DATABASE || 'denzipur';
+const DB_ID = process.env.DZ_DATABASE || '(default)';
 // App Check: mulai "false" (mode monitor). Ubah ke "true" hanya setelah semua klien terdaftar.
 const ENFORCE_APP_CHECK = process.env.DZ_ENFORCE_APP_CHECK === 'true';
 const BOOTSTRAP_ADMINS = (process.env.DZ_BOOTSTRAP_ADMINS || '')

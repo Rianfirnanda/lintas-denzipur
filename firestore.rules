@@ -1,5 +1,5 @@
 rules_version = '2';
-// Rules untuk database Firestore bernama "denzipur" (bukan database default Lintas Benteng).
+// Rules untuk database Firestore project lintas-denzipur (terpisah dari project Lintas Benteng).
 // Data otoritatif (akses, sesi, titik lokasi, audit) hanya ditulis Cloud Functions.
 service cloud.firestore {
   match /databases/{database}/documents {
