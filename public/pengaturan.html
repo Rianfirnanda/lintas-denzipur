@@ -28,12 +28,17 @@
     <label>Masa simpan riwayat titik (hari, 7–730)<input name="retentionDays" type="number" min="7" max="730" required></label>
     <div class="wide acts"><button class="btn primary" id="save" type="submit">Simpan</button><span class="muted" id="upd" style="font-size:12px"></span></div>
   </form>
-  <p class="muted" style="font-size:12px;margin-top:12px">Interval lebih pendek menambah ketelitian jalur tetapi menambah pemakaian baterai, kuota, dan biaya Firestore. Riwayat titik dihapus otomatis setelah masa simpan; posisi terakhir sesi selesai juga dihapus. Log audit tidak dihapus otomatis.</p>
+  <p class="muted" style="font-size:12px;margin-top:12px">Interval lebih pendek menambah ketelitian jalur tetapi menambah pemakaian baterai dan kuota. Paket gratis Firestore (Spark) membatasi 20.000 penulisan/hari: dengan bawaan 30 detik, satu personel yang tracking 8 jam memakai ±1.000 penulisan. Log audit tidak dihapus otomatis.</p>
+</div>
+<div class="panel" id="mntPanel" hidden>
+  <h2>Pemeliharaan data</h2>
+  <p class="muted" style="font-size:12.5px;margin-bottom:12px">Mengakhiri sesi yang tidak diperbarui melewati batas, dan menghapus riwayat titik sesi yang melewati masa simpan. Dijalankan otomatis saat Administrator Sistem membuka Dashboard (maksimal sekali sehari), atau manual di sini.</p>
+  <div class="acts"><button class="btn wn" id="mntBtn">Jalankan pemeliharaan sekarang</button><span class="muted" id="mntInfo" style="font-size:12px"></span></div>
 </div>
 <div class="toast" id="toast"></div>
 <script type="module">
-import { guard, $, F, db, toast, errText, ready, fmtTime, tsMs, stateBox } from './common.js';
-const DEF = { staleMinutes: 5, captureIntervalSec: 15, sendIntervalSec: 30, maxQueue: 500, autoEndMinutes: 180, retentionDays: 90 };
+import { guard, $, F, db, dz, toast, errText, ready, fmtTime, tsMs, stateBox } from './common.js';
+import { DEFAULT_SETTINGS as DEF } from './js/dz-core.js';
 guard(async (ctx) => {
   const f = $('f');
   $('who').textContent = ctx.isSys ? 'Hanya Administrator Sistem yang dapat mengubah parameter ini.' : 'Hanya baca — perubahan dilakukan Administrator Sistem.';
@@ -51,6 +56,17 @@ guard(async (ctx) => {
     try { await F.setDoc(F.doc(db, 'pengaturan', 'umum'), { ...data, updatedBy: ctx.uid, updatedAt: F.serverTimestamp() }); toast('Pengaturan disimpan.'); $('upd').textContent = 'Baru saja disimpan.'; }
     catch (x) { toast('Gagal: ' + errText(x), 'err'); }
   };
+  if (ctx.isSys) {
+    $('mntPanel').hidden = false;
+    const info = async () => { try { const m = (await F.getDoc(F.doc(db, 'pengaturan', 'pemeliharaan'))).data(); $('mntInfo').textContent = m ? 'Terakhir: ' + fmtTime(tsMs(m.lastRunAt)) + ' · ' + m.autoEnded + ' sesi diakhiri, ' + m.purgedSessions + ' riwayat dihapus' : 'Belum pernah dijalankan.'; } catch { /* abaikan */ } };
+    $('mntBtn').onclick = async () => {
+      $('mntBtn').disabled = true; $('mntInfo').textContent = 'Menjalankan…';
+      try { const r = await dz.maintenance({ uid: ctx.uid }); toast('Pemeliharaan selesai: ' + r.autoEnded + ' sesi diakhiri, ' + r.purgedSessions + ' riwayat dihapus (' + r.purgedPoints + ' titik).'); }
+      catch (x) { toast('Gagal: ' + errText(x), 'err'); }
+      $('mntBtn').disabled = false; info();
+    };
+    info();
+  }
   ready();
 });
 </script>

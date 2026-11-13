@@ -18,29 +18,30 @@
 <div class="panel"><h2>Tracking</h2><table><tbody id="tt"></tbody></table></div>
 <div class="toast" id="toast"></div>
 <script type="module">
-import { guard, $, esc, call, LABEL, fmtTime, errText, ready, stateBox, downloadCsv } from './common.js';
-guard(async () => {
+import { guard, $, esc, dz, LABEL, fmtTime, errText, ready, stateBox, downloadCsv } from './common.js';
+guard(async (ctx) => {
   let d = null;
-  const rows = (obj, lab) => Object.entries(obj).map(([k, v]) => `<tr><td>${esc(lab[k] || k)}</td><td style="text-align:right"><b>${v}</b></td></tr>`).join('');
+  const NA = 'tidak tersedia untuk peran ini';
+  const rows = (obj, lab) => !obj ? `<tr><td class="muted">${NA}</td><td></td></tr>` : Object.entries(obj).map(([k, v]) => `<tr><td>${esc(lab[k] || k)}</td><td style="text-align:right"><b>${v}</b></td></tr>`).join('');
   async function load() {
     stateBox($('state'), 'loading', 'Memuat rekap…');
     try {
-      d = await call('dzDashboard');
+      d = await dz.dashboard(ctx);
       if (d.empty) return stateBox($('state'), 'empty', 'Akun belum memiliki lingkup unit.');
       $('state').innerHTML = '';
       $('sub').textContent = `Diperbarui ${fmtTime(d.generatedAtMs, { seconds: true })} · ${d.scope ? d.scope.length + ' unit' : 'semua unit'}`;
       $('tk').innerHTML = rows(d.kegiatan, LABEL.kegiatan);
       $('tl').innerHTML = rows(d.laporan, LABEL.laporan);
-      $('tt').innerHTML = `<tr><td>Personel aktif</td><td style="text-align:right"><b>${d.personelAktif}</b></td></tr><tr><td>Sesi tracking aktif</td><td style="text-align:right"><b>${d.sesiAktif}</b></td></tr>
-        <tr><td>Lokasi belum diperbarui (&gt; ${d.staleMinutes} mnt)</td><td style="text-align:right"><b>${d.lokasiBelumDiperbarui ?? 'tidak tersedia untuk peran ini'}</b></td></tr>`;
+      $('tt').innerHTML = `<tr><td>Personel aktif</td><td style="text-align:right"><b>${d.personelAktif ?? NA}</b></td></tr><tr><td>Sesi tracking aktif</td><td style="text-align:right"><b>${d.sesiAktif ?? NA}</b></td></tr>
+        <tr><td>Lokasi belum diperbarui (&gt; ${d.staleMinutes} mnt)</td><td style="text-align:right"><b>${d.lokasiBelumDiperbarui ?? NA}</b></td></tr>`;
       $('csv').disabled = false;
     } catch (e) { stateBox($('state'), 'err', 'Gagal memuat rekap: ' + errText(e), load); }
     ready();
   }
   $('ref').onclick = load;
   $('csv').onclick = () => d && downloadCsv('rekap-denzipur.csv', [['Kategori', 'Status', 'Jumlah'],
-    ...Object.entries(d.kegiatan).map(([k, v]) => ['Kegiatan', LABEL.kegiatan[k], v]),
-    ...Object.entries(d.laporan).map(([k, v]) => ['Laporan', LABEL.laporan[k], v]),
+    ...Object.entries(d.kegiatan || {}).map(([k, v]) => ['Kegiatan', LABEL.kegiatan[k], v]),
+    ...Object.entries(d.laporan || {}).map(([k, v]) => ['Laporan', LABEL.laporan[k], v]),
     ['Personel', 'Aktif', d.personelAktif], ['Tracking', 'Sesi aktif', d.sesiAktif], ['Dibuat', fmtTime(d.generatedAtMs), '']]);
   load();
 });

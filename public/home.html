@@ -27,7 +27,7 @@
 </div>
 <div class="toast" id="toast"></div>
 <script type="module">
-import { guard, call, $, esc, LABEL, fmtTime, ago, errText, ready, stateBox } from './common.js';
+import { guard, dz, F, db, $, esc, LABEL, fmtTime, ago, errText, ready, stateBox, toast, tsMs } from './common.js';
 
 guard(async (ctx) => {
   let timer = null, last = null;
@@ -45,7 +45,7 @@ guard(async (ctx) => {
     if (!last) stateBox($('stats'), 'loading', 'Memuat ringkasan…');
     $('refresh').disabled = true;
     try {
-      const d = await call('dzDashboard');
+      const d = await dz.dashboard(ctx);
       last = d;
       if (d.empty) {
         stateBox($('stats'), 'empty', 'Akun Anda belum memiliki lingkup unit. Minta administrator menetapkan unit.');
@@ -54,14 +54,14 @@ guard(async (ctx) => {
       $('sub').textContent = `Diperbarui ${fmtTime(d.generatedAtMs, { seconds: true })} · lingkup: ${d.scope ? d.scope.length + ' unit' : 'semua unit'} · ambang lokasi ${d.staleMinutes} menit`;
       $('stats').innerHTML = '<div class="stat-grid">' + [
         card(d.personelAktif, 'Personel aktif'),
-        card(d.kegiatan.berjalan, 'Kegiatan berjalan', 'kegiatan'),
-        card(d.laporan.diajukan, 'Laporan menunggu pemeriksaan', 'laporan', d.laporan.diajukan > 0),
+        card(d.kegiatan?.berjalan ?? null, 'Kegiatan berjalan', 'kegiatan'),
+        card(d.laporan?.diajukan ?? null, 'Laporan menunggu pemeriksaan', 'laporan', d.laporan?.diajukan > 0),
         card(d.sesiAktif, 'Sesi tracking aktif', 'tracking'),
         card(d.lokasiBelumDiperbarui, `Lokasi belum diperbarui (> ${d.staleMinutes} mnt)`, 'tracking', d.lokasiBelumDiperbarui > 0),
       ].join('') + '</div>';
-      $('keg').innerHTML = breakdown(d.kegiatan, LABEL.kegiatan);
-      $('lap').innerHTML = breakdown(d.laporan, LABEL.laporan);
-      $('feed').innerHTML = d.aktivitas.length
+      $('keg').innerHTML = d.kegiatan ? breakdown(d.kegiatan, LABEL.kegiatan) : '<div class="state">Tidak tersedia untuk peran ini.</div>';
+      $('lap').innerHTML = d.laporan ? breakdown(d.laporan, LABEL.laporan) : '<div class="state">Tidak tersedia untuk peran ini.</div>';
+      $('feed').innerHTML = !d.aktivitas ? '<li class="muted">Tidak tersedia untuk peran ini.</li>' : d.aktivitas.length
         ? d.aktivitas.map((a) => `<li><span>${esc(a.ringkasan)}</span><small class="muted" title="${esc(fmtTime(a.atMs))}">${ago(a.atMs)}</small></li>`).join('')
         : '<li class="muted">Belum ada aktivitas tercatat.</li>';
     } catch (e) {
@@ -74,6 +74,16 @@ guard(async (ctx) => {
   const loop = () => { clearInterval(timer); if (document.visibilityState === 'visible') timer = setInterval(load, 60000); };
   document.addEventListener('visibilitychange', () => { loop(); if (document.visibilityState === 'visible') load(); });
   loop(); await load();
+  // Pengganti jadwal server (paket Spark): pemeliharaan otomatis maksimal sekali per 24 jam saat sysadmin membuka Dashboard.
+  if (ctx.isSys) {
+    try {
+      const m = (await F.getDoc(F.doc(db, 'pengaturan', 'pemeliharaan'))).data();
+      if (!m || Date.now() - (tsMs(m.lastRunAt) || 0) > 24 * 3600_000) {
+        const r = await dz.maintenance({ uid: ctx.uid });
+        if (r.autoEnded || r.purgedSessions) { toast('Pemeliharaan otomatis: ' + r.autoEnded + ' sesi diakhiri, ' + r.purgedSessions + ' riwayat dihapus.'); load(); }
+      }
+    } catch (e) { console.warn('Pemeliharaan otomatis gagal:', e.code || e.message); }
+  }
 });
 </script>
 </body>

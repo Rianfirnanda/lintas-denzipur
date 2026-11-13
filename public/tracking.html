@@ -65,7 +65,7 @@
 <div class="toast" id="toast"></div>
 
 <script type="module">
-import { guard, $, esc, F, db, call, toast, chip, LABEL, fmtTime, ago, tsMs, errText, ready, scoped, unitOptions, loadUnits, stateBox, createListenerScope, downloadCsv } from './common.js';
+import { guard, $, esc, F, db, dz, toast, chip, LABEL, fmtTime, ago, tsMs, errText, ready, scoped, unitOptions, loadUnits, stateBox, createListenerScope, downloadCsv } from './common.js';
 import { freshness } from './js/dz-core.js';
 
 guard(async (ctx) => {
@@ -207,7 +207,7 @@ guard(async (ctx) => {
   async function showTrack(sessionId) {
     toast('Memuat riwayat titik…');
     try {
-      const r = await call('dzGetSessionTrack', { sessionId });
+      const r = await dz.getSessionTrack({ uid: ctx.uid }, sessionId);
       if (tab === 'live') await switchTab('hist', true);
       clearMap();
       trackCache = r;
@@ -228,7 +228,7 @@ guard(async (ctx) => {
   }
   $('exportBtn').onclick = async () => {
     if (!trackCache) return;
-    await call('dzLogAccess', { jenis: 'ekspor_lokasi', filter: { sessionId: trackCache.session.id } }).catch(() => {});
+    await dz.logAccess({ uid: ctx.uid }, 'ekspor_lokasi', 'Ekspor CSV riwayat sesi ' + (trackCache.session.nama || trackCache.session.id)).catch(() => {});
     downloadCsv(`riwayat-sesi-${trackCache.session.id}.csv`, [['Seq', 'Waktu pengambilan (WIB)', 'Diterima server (WIB)', 'Lintang', 'Bujur', 'Akurasi (m)', 'Kualitas', 'Terlambat'],
       ...trackCache.points.map((p) => [p.seq, fmtTime(p.capturedAtMs, { seconds: true }), fmtTime(p.receivedAtMs, { seconds: true }), p.lat, p.lng, p.acc, p.quality.join(' '), p.terlambat ? 'ya' : ''])]);
   };
@@ -311,7 +311,7 @@ guard(async (ctx) => {
   $('fSt').onchange = redraw; $('fQ').oninput = redraw;
   addEventListener('pagehide', () => subs.clear());
 
-  call('dzLogAccess', { jenis: 'buka_live_tracking', filter: { unit: unitF() || 'lingkup' } }).catch(() => {});
+  dz.logAccess({ uid: ctx.uid }, 'buka_live_tracking', 'Membuka Live Tracking').catch(() => {});
   switchTab('live');
 }, { roles: ['sysadmin', 'operator'] });
 </script>

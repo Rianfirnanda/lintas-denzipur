@@ -26,7 +26,7 @@ for (const f of files) {
   const t = readFileSync(f, 'utf8');
   if (/PRIVATE KEY|"private_key"|service_account/.test(t)) errors.push(`${f}: tampak berisi kredensial service account`);
 }
-for (const f of ['firebase.json', 'firestore.rules', 'storage.rules', 'firestore.indexes.json', '.firebaserc', 'functions/src/index.js']) {
+for (const f of ['firebase.json', 'firestore.rules', 'firestore.indexes.json', '.firebaserc', 'public/js/dz-data.js']) {
   if (!existsSync(f)) errors.push(`Berkas wajib tidak ada: ${f}`);
 }
 JSON.parse(readFileSync('firestore.indexes.json', 'utf8'));

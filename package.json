@@ -2,17 +2,16 @@
   "name": "lintas-denzipur",
   "private": true,
   "type": "module",
-  "description": "Lintas Denzipur: admin, aplikasi anggota (tracking), Rules, Functions, dan pengujian emulator.",
+  "description": "Lintas Denzipur: admin, aplikasi anggota (tracking), Firestore Rules, dan pengujian emulator (paket Spark).",
   "scripts": {
     "test:unit": "node --test \"tests/unit/*.test.mjs\"",
-    "test:emu": "firebase emulators:exec --only auth,firestore,storage,functions --project demo-denzipur \"node --test --test-concurrency=1 tests/emulator/*.test.mjs\"",
+    "test:emu": "firebase emulators:exec --only auth,firestore --project demo-denzipur \"node --test --test-concurrency=1 tests/emulator/*.test.mjs\"",
     "test": "npm run test:unit && npm run test:emu",
     "check": "node scripts/check-build.mjs",
     "serve": "firebase emulators:start --project demo-denzipur",
     "migrate:dry": "node scripts/migrate-from-default.mjs --dry-run"
   },
   "devDependencies": {
-    "@firebase/rules-unit-testing": "^4.0.1",
     "firebase": "^11.0.2",
     "firebase-admin": "^13.0.0"
   }

@@ -71,20 +71,6 @@ export class TrackingQueue {
   clear() { try { this.storage.removeItem(this.key); } catch { /* abaikan */ } this.items = []; }
 }
 
-/** Klasifikasi galat panggilan Functions untuk aplikasi anggota. */
-export function classifyCallError(err) {
-  const code = (err?.code || '').replace(/^functions\//, '');
-  const reason = err?.details?.reason;
-  if (code === 'failed-precondition' && reason === 'sesi_ditutup') return 'session_closed';
-  if (code === 'failed-precondition' && reason === 'perangkat_lain') return 'other_device';
-  if (code === 'permission-denied' && (reason === 'blocked' || reason === 'pending')) return 'account_inactive';
-  if (code === 'permission-denied') return 'forbidden';
-  if (code === 'unauthenticated') return 'signed_out';
-  if (code === 'resource-exhausted') return 'backoff';
-  if (code === 'invalid-argument') return 'drop';
-  return 'retry'; // unavailable, deadline-exceeded, internal, jaringan
-}
-
 export function classifyGeoError(err) {
   switch (err?.code) {
     case 1: return { kind: 'denied', text: 'Izin lokasi ditolak. Aktifkan izin lokasi untuk situs ini di pengaturan browser, lalu tekan Coba Lagi.' };
@@ -105,3 +91,83 @@ export function createListenerScope() {
 }
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/* ── Aturan domain (sebelumnya di Cloud Functions; kini dipakai klien, dan ditegakkan ulang oleh Firestore Rules) ── */
+export const ROLES = ['sysadmin', 'operator', 'pemeriksa', 'pembaca', 'anggota'];
+export const STAFF_ROLES = ['operator', 'pemeriksa', 'pembaca'];
+export const KEGIATAN_STATUS = ['rencana', 'berjalan', 'selesai', 'dibatalkan'];
+export const LAPORAN_STATUS = ['draf', 'diajukan', 'perlu_revisi', 'disetujui'];
+export const MAX_BATCH = 50;          // titik per batch (dibatasi juga oleh Rules)
+export const MIN_INGEST_GAP_MS = 3000; // jeda minimum antar batch per sesi (ditegakkan Rules)
+
+// Bawaan disetel untuk kuota paket Spark (20.000 tulis/hari). Lihat docs/TRACKING.md.
+export const DEFAULT_SETTINGS = Object.freeze({
+  staleMinutes: 5,
+  captureIntervalSec: 30,
+  sendIntervalSec: 60,
+  maxQueue: 500,
+  autoEndMinutes: 180,
+  retentionDays: 90,
+});
+export const SETTINGS_LIMITS = Object.freeze({
+  staleMinutes: [1, 120],
+  captureIntervalSec: [5, 300],
+  sendIntervalSec: [10, 600],
+  maxQueue: [50, 2000],
+  autoEndMinutes: [30, 1440],
+  retentionDays: [7, 730],
+});
+export function mergeSettings(raw) {
+  const out = { ...DEFAULT_SETTINGS };
+  for (const [k, [lo, hi]] of Object.entries(SETTINGS_LIMITS)) {
+    const v = raw?.[k];
+    if (Number.isInteger(v) && v >= lo && v <= hi) out[k] = v;
+  }
+  return out;
+}
+
+export const isSafeId = (s) => typeof s === 'string' && /^[A-Za-z0-9_-]{6,64}$/.test(s);
+const num = (v) => typeof v === 'number' && Number.isFinite(v);
+
+export function haversineM(a, b) {
+  const R = 6371000, rad = (d) => d * Math.PI / 180;
+  const dLat = rad(b.lat - a.lat), dLng = rad(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+/** Validasi satu titik sebelum dikirim. Rules menegakkan ulang rentang, tipe, dan waktu di server. */
+export function validatePoint(p, { sessionStartMs, nowMs, maxFutureMs = 2 * 60 * 1000, maxPastSkewMs = 60 * 1000 }) {
+  if (!p || typeof p !== 'object') return { ok: false, reason: 'format' };
+  if (Object.keys(p).some((k) => !['seq', 'lat', 'lng', 'acc', 't'].includes(k))) return { ok: false, reason: 'field_tidak_diizinkan' };
+  if (!Number.isInteger(p.seq) || p.seq < 0 || p.seq > 1e9) return { ok: false, reason: 'seq' };
+  if (!num(p.lat) || p.lat < -90 || p.lat > 90) return { ok: false, reason: 'lat' };
+  if (!num(p.lng) || p.lng < -180 || p.lng > 180) return { ok: false, reason: 'lng' };
+  if (!num(p.acc) || p.acc < 0 || p.acc > 100000) return { ok: false, reason: 'akurasi' };
+  if (!Number.isInteger(p.t)) return { ok: false, reason: 'waktu' };
+  if (p.t > nowMs + maxFutureMs) return { ok: false, reason: 'waktu_masa_depan' };
+  if (sessionStartMs != null && p.t < sessionStartMs - maxPastSkewMs) return { ok: false, reason: 'sebelum_sesi' };
+  const quality = [];
+  if (p.acc > 100) quality.push('akurasi_rendah');
+  if (p.lat === 0 && p.lng === 0) quality.push('koordinat_nol');
+  return { ok: true, point: { seq: p.seq, lat: p.lat, lng: p.lng, acc: Math.round(p.acc * 10) / 10, t: p.t }, quality };
+}
+
+/** Tandai lompatan tidak wajar (> maxSpeed m/s). Hanya penanda kualitas data, bukan kesimpulan pelanggaran. */
+export function flagJumps(sortedPoints, prev, maxSpeed = 70) {
+  let last = prev;
+  for (const sp of sortedPoints) {
+    if (last && sp.point.t > last.t) {
+      const v = haversineM(last, sp.point) / ((sp.point.t - last.t) / 1000);
+      if (v > maxSpeed) sp.quality.push('lompatan_tidak_wajar');
+    }
+    last = sp.point;
+  }
+  return sortedPoints;
+}
+
+export const LAPORAN_TRANSITIONS = Object.freeze({
+  pemilik: { draf: ['draf', 'diajukan'], perlu_revisi: ['perlu_revisi', 'diajukan'] },
+  pemeriksa: { diajukan: ['perlu_revisi', 'disetujui'] },
+});
+export const canTransitionLaporan = (actor, from, to) => (LAPORAN_TRANSITIONS[actor]?.[from] || []).includes(to);

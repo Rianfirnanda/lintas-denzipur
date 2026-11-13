@@ -3,48 +3,64 @@
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
   },
-  "storage": {
-    "rules": "storage.rules"
+  "hosting": {
+    "public": "public",
+    "cleanUrls": false,
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "redirects": [
+      {
+        "source": "/",
+        "destination": "/admin.html",
+        "type": 302
+      }
+    ],
+    "headers": [
+      {
+        "source": "**/*.@(html|js|css)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
+      },
+      {
+        "source": "**",
+        "headers": [
+          {
+            "key": "X-Content-Type-Options",
+            "value": "nosniff"
+          },
+          {
+            "key": "Referrer-Policy",
+            "value": "strict-origin-when-cross-origin"
+          },
+          {
+            "key": "Permissions-Policy",
+            "value": "geolocation=(self), camera=(self), microphone=()"
+          }
+        ]
+      }
+    ]
   },
-  "functions": [
-    {
-      "source": "functions",
-      "codebase": "denzipur",
-      "runtime": "nodejs22",
-      "ignore": ["node_modules", ".git", "*.local", "test", ".env.example"]
-    }
-  ],
-  "hosting": [
-    {
-      "public": "public",
-      "cleanUrls": false,
-      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
-      "redirects": [
-        { "source": "/", "destination": "/admin.html", "type": 302 }
-      ],
-      "headers": [
-        {
-          "source": "**/*.@(html|js|css)",
-          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
-        },
-        {
-          "source": "**",
-          "headers": [
-            { "key": "X-Content-Type-Options", "value": "nosniff" },
-            { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
-            { "key": "Permissions-Policy", "value": "geolocation=(self), camera=(self), microphone=()" }
-          ]
-        }
-      ]
-    }
-  ],
   "emulators": {
-    "auth": { "port": 9099 },
-    "firestore": { "port": 8080 },
-    "storage": { "port": 9199 },
-    "functions": { "port": 5001 },
-    "hosting": { "port": 5000 },
-    "ui": { "enabled": true, "port": 4000 },
+    "auth": {
+      "port": 9099
+    },
+    "firestore": {
+      "port": 8080
+    },
+    "hosting": {
+      "port": 5000
+    },
+    "ui": {
+      "enabled": true,
+      "port": 4000
+    },
     "singleProjectMode": true
   }
 }

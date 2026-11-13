@@ -1,13 +1,16 @@
 rules_version = '2';
-// Rules untuk database Firestore project lintas-denzipur (terpisah dari project Lintas Benteng).
-// Data otoritatif (akses, sesi, titik lokasi, audit) hanya ditulis Cloud Functions.
+// Rules Firestore project lintas-denzipur (paket Spark, tanpa Cloud Functions).
+// Semua penegakan akses ada di sini: peran & lingkup unit, kepemilikan, validasi titik,
+// urutan seq (deduplikasi), batas frekuensi, satu sesi aktif per personel, dan alur laporan.
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    function doc_(c, id) { return /databases/$(database)/documents/$(c)/$(id); }
     function signedIn() { return request.auth != null; }
-    function aksesPath(uid) { return /databases/$(database)/documents/akses/$(uid); }
-    function me() { return get(aksesPath(request.auth.uid)).data; }
-    function active() { return signedIn() && exists(aksesPath(request.auth.uid)) && me().status == 'active'; }
+    function myEmail() { return request.auth.token.email.lower(); }
+    function verified() { return request.auth.token.email_verified == true; }
+    function me() { return get(doc_('akses', request.auth.uid)).data; }
+    function active() { return signedIn() && exists(doc_('akses', request.auth.uid)) && me().status == 'active'; }
     function hasRole(roles) { return active() && me().role in roles; }
     function isSys() { return hasRole(['sysadmin']); }
     function inScope(unitId) { return unitId in me().unitScope; }
@@ -21,38 +24,85 @@ service cloud.firestore {
     function optStr(v, max) { return v == null || (v is string && v.size() <= max); }
     function isLat(v) { return v is number && v >= -90 && v <= 90; }
     function isLng(v) { return v is number && v >= -180 && v <= 180; }
+    function n() { return request.resource.data; }
+    function changed(keys) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys); }
+    function roles() { return ['sysadmin', 'operator', 'pemeriksa', 'pembaca', 'anggota']; }
 
-    // ── Akses & personel: tulis hanya via Functions ──
+    // ── Akses (izin aplikasi) ──
+    function validAkses(d) {
+      return d.keys().hasOnly(['uid', 'email', 'role', 'status', 'unitId', 'unitScope', 'createdAt', 'updatedAt', 'updatedBy', 'lastLogin'])
+        && d.role in roles() && d.status in ['pending', 'active', 'blocked']
+        && optStr(d.unitId, 64) && d.unitScope is list && d.unitScope.size() <= 30;
+    }
+    function inviteMatches(d) {
+      let i = get(doc_('undangan', myEmail())).data;
+      return d.role == i.role && d.status == 'active' && d.unitId == i.unitId && d.unitScope == i.unitScope;
+    }
     match /akses/{uid} {
       allow read: if (signedIn() && request.auth.uid == uid) || isSys()
-                  || (hasRole(['operator']) && resource.data.unitId != null && inScope(resource.data.unitId));
-      allow write: if false;
+                  || (resource.data.unitId != null && isStaffOf(resource.data.unitId));
+      // Registrasi mandiri: selalu "pending" kecuali lewat undangan atau daftar bootstrap (pengaturan/bootstrap, diisi pemilik project).
+      allow create: if signedIn() && request.auth.uid == uid && validAkses(n())
+        && n().uid == uid && n().email == myEmail()
+        && n().createdAt == request.time && n().updatedAt == request.time && n().lastLogin == request.time && n().updatedBy == 'registrasi'
+        && ((n().role == 'anggota' && n().status == 'pending' && n().unitId == null && n().unitScope.size() == 0)
+            || (verified() && exists(doc_('undangan', myEmail())) && !existsAfter(doc_('undangan', myEmail())) && inviteMatches(n()))
+            || (verified() && n().role == 'sysadmin' && n().status == 'active' && n().unitId == null
+                && exists(doc_('pengaturan', 'bootstrap')) && myEmail() in get(doc_('pengaturan', 'bootstrap')).data.emails));
+      // Pemilik akun: hanya mencatat login, atau aktivasi lewat undangan saat masih pending.
+      allow update: if signedIn() && request.auth.uid == uid
+        && ((changed(['lastLogin']) && n().lastLogin == request.time)
+            || (resource.data.status == 'pending' && verified() && exists(doc_('undangan', myEmail())) && !existsAfter(doc_('undangan', myEmail()))
+                && inviteMatches(n()) && changed(['role', 'status', 'unitId', 'unitScope', 'updatedAt', 'updatedBy', 'lastLogin'])
+                && n().updatedBy == 'undangan' && n().updatedAt == request.time));
+      // Administrator sistem: tidak dapat mengubah akses akun sendiri (selalu tersisa minimal satu sysadmin).
+      allow update: if isSys() && request.auth.uid != uid && validAkses(n())
+        && changed(['role', 'status', 'unitId', 'unitScope', 'updatedAt', 'updatedBy'])
+        && n().updatedBy == request.auth.uid && n().updatedAt == request.time
+        && (n().unitId == null || exists(doc_('unit', n().unitId)));
+      allow delete: if isSys() && request.auth.uid != uid && resource.data.role != 'sysadmin';
+    }
+
+    // ── Personel (profil organisasi) ──
+    function validPersonel(d) {
+      return d.keys().hasOnly(['uid', 'email', 'nama', 'pangkat', 'jabatan', 'unitId', 'statusKeanggotaan', 'createdAt', 'updatedAt', 'updatedBy'])
+        && isStr(d.nama, 1, 120) && optStr(d.pangkat, 60) && optStr(d.jabatan, 120)
+        && d.statusKeanggotaan in ['aktif', 'nonaktif', 'mutasi', 'pensiun'];
     }
     match /personel/{uid} {
       allow read: if (signedIn() && request.auth.uid == uid) || isSys()
                   || (resource.data.unitId != null && isStaffOf(resource.data.unitId));
-      allow write: if false;
+      allow create: if signedIn() && request.auth.uid == uid && validPersonel(n())
+        && n().uid == uid && n().email == myEmail() && n().pangkat == '' && n().jabatan == '' && n().statusKeanggotaan == 'aktif'
+        && n().unitId == getAfter(doc_('akses', uid)).data.unitId && n().createdAt == request.time;
+      // Unit personel selalu mengikuti dokumen akses (diubah bersamaan dalam satu batch).
+      allow update: if signedIn() && request.auth.uid == uid && changed(['unitId', 'updatedAt'])
+        && n().unitId == getAfter(doc_('akses', uid)).data.unitId;
+      allow update: if isSys() && validPersonel(n())
+        && changed(['nama', 'pangkat', 'jabatan', 'statusKeanggotaan', 'unitId', 'updatedAt', 'updatedBy'])
+        && n().unitId == getAfter(doc_('akses', uid)).data.unitId && n().updatedBy == request.auth.uid;
+      allow update: if resource.data.unitId != null && isOperatorOf(resource.data.unitId) && validPersonel(n())
+        && changed(['nama', 'pangkat', 'jabatan', 'statusKeanggotaan', 'updatedAt', 'updatedBy']) && n().updatedBy == request.auth.uid;
+      allow delete: if isSys() && request.auth.uid != uid && !existsAfter(doc_('akses', uid));
     }
-    match /undangan/{email} {
-      allow read, delete: if isSys();
+
+    match /undangan/{inv} {
+      allow read: if isSys() || (signedIn() && myEmail() == inv);
       allow create, update: if isSys()
-        && request.resource.data.keys().hasOnly(['email', 'role', 'unitId', 'unitScope', 'createdBy', 'createdAt'])
-        && request.resource.data.email == email
-        && request.resource.data.role in ['sysadmin', 'operator', 'pemeriksa', 'pembaca', 'anggota']
-        && optStr(request.resource.data.unitId, 64)
-        && request.resource.data.unitScope is list && request.resource.data.unitScope.size() <= 30
-        && request.resource.data.createdBy == request.auth.uid
-        && request.resource.data.createdAt == request.time;
+        && n().keys().hasOnly(['email', 'role', 'unitId', 'unitScope', 'createdBy', 'createdAt'])
+        && n().email == inv && inv == inv.lower() && n().role in roles()
+        && optStr(n().unitId, 64) && n().unitScope is list && n().unitScope.size() <= 30
+        && n().createdBy == request.auth.uid && n().createdAt == request.time;
+      allow delete: if isSys() || (signedIn() && myEmail() == inv);
     }
 
     // ── Unit ──
     match /unit/{unitId} {
       allow read: if active();
       allow create, update: if isSys()
-        && request.resource.data.keys().hasOnly(['nama', 'kode', 'keterangan', 'updatedAt'])
-        && isStr(request.resource.data.nama, 2, 120)
-        && optStr(request.resource.data.kode, 30) && optStr(request.resource.data.keterangan, 300)
-        && request.resource.data.updatedAt == request.time;
+        && n().keys().hasOnly(['nama', 'kode', 'keterangan', 'updatedAt'])
+        && isStr(n().nama, 2, 120) && optStr(n().kode, 30) && optStr(n().keterangan, 300)
+        && n().updatedAt == request.time;
       allow delete: if isSys();
     }
 
@@ -72,42 +122,133 @@ service cloud.firestore {
     }
     match /kegiatan/{id} {
       allow read: if isStaffOf(resource.data.unitId) || (active() && request.auth.uid in resource.data.pesertaUids);
-      allow create: if canManageUnit(request.resource.data.unitId) && validKegiatan(request.resource.data)
-        && request.resource.data.createdBy == request.auth.uid && request.resource.data.createdAt == request.time;
-      allow update: if canManageUnit(resource.data.unitId) && canManageUnit(request.resource.data.unitId)
-        && validKegiatan(request.resource.data)
-        && request.resource.data.createdBy == resource.data.createdBy && request.resource.data.createdAt == resource.data.createdAt
-        // Status final (selesai/dibatalkan) tidak dapat dibuka kembali.
-        && (!(resource.data.status in ['selesai', 'dibatalkan']) || request.resource.data.status == resource.data.status);
+      allow create: if canManageUnit(n().unitId) && validKegiatan(n())
+        && n().createdBy == request.auth.uid && n().createdAt == request.time;
+      allow update: if canManageUnit(resource.data.unitId) && canManageUnit(n().unitId)
+        && validKegiatan(n())
+        && n().createdBy == resource.data.createdBy && n().createdAt == resource.data.createdAt
+        && (!(resource.data.status in ['selesai', 'dibatalkan']) || n().status == resource.data.status);
+      // Peserta: Rencana → Berjalan hanya saat memulai sesi tracking untuk kegiatan ini.
+      allow update: if active() && request.auth.uid in resource.data.pesertaUids
+        && resource.data.status == 'rencana' && n().status == 'berjalan'
+        && changed(['status', 'updatedBy', 'updatedAt']) && n().updatedBy == request.auth.uid && n().updatedAt == request.time
+        && getAfter(doc_('sesi_aktif', request.auth.uid)).data.kegiatanId == id;
       allow delete: if canManageUnit(resource.data.unitId) && resource.data.status == 'rencana';
     }
 
-    // ── Tracking: hanya Functions yang menulis ──
-    match /sesi/{id} {
-      allow read: if (signedIn() && resource.data.uid == request.auth.uid && active()) || canSeeLocation(resource.data.unitId);
-      allow write: if false;
-      match /titik/{pid} { allow read, write: if false; }  // dibaca via dzGetSessionTrack (teraudit)
+    // ── Sesi tracking ──
+    function endReasons() { return ['selesai_oleh_anggota', 'pindah_perangkat', 'keluar_aplikasi', 'diakhiri_operator', 'akun_diblokir', 'akses_dicabut', 'akun_dihapus', 'tidak_ada_pembaruan']; }
+    function sesiKeys() { return ['uid', 'unitId', 'kegiatanId', 'kegiatanJudul', 'nama', 'pangkat', 'deviceId', 'status', 'mulaiAt', 'selesaiAt', 'endedReason', 'endedBy',
+                                  'lastSeq', 'pointCount', 'lastCapturedAt', 'lastIngestAt', 'titikDihapus', 'titikDihapusAt']; }
+    function canStart(sid, d) {
+      let k = get(doc_('kegiatan', d.kegiatanId)).data;
+      let p = get(doc_('personel', d.uid)).data;
+      return request.auth.uid in k.pesertaUids && k.status in ['rencana', 'berjalan'] && k.trackingDiizinkan == true
+        && d.unitId == k.unitId && d.kegiatanJudul == k.judul && d.nama == p.nama && d.pangkat == p.pangkat
+        && d.deviceId is string && d.deviceId.matches('^[A-Za-z0-9_-]{6,64}$')
+        && d.status == 'aktif' && d.mulaiAt == request.time && d.selesaiAt == null && d.endedReason == null && d.endedBy == null
+        && d.lastSeq == -1 && d.pointCount == 0 && d.lastCapturedAt == null && d.lastIngestAt == null
+        && getAfter(doc_('sesi_aktif', d.uid)).data.sessionId == sid
+        && existsAfter(doc_('lokasi_terkini', sid));
     }
-    match /lokasi_terkini/{id} {
-      allow read: if (signedIn() && resource.data.uid == request.auth.uid && active()) || canSeeLocation(resource.data.unitId);
-      allow write: if false;
+    // Pengiriman titik: seq naik (deduplikasi), maks. 50 titik per batch, jeda minimal 3 detik.
+    function ingestOk(r, d) {
+      return r.uid == request.auth.uid && r.status == 'aktif' && d.status == 'aktif'
+        && d.diff(r).affectedKeys().hasOnly(['lastSeq', 'pointCount', 'lastCapturedAt', 'lastIngestAt'])
+        && d.lastSeq is int && d.lastSeq > r.lastSeq && d.lastSeq <= r.lastSeq + 5000
+        && d.pointCount is int && d.pointCount > r.pointCount && d.pointCount - r.pointCount <= 50
+        && d.lastIngestAt == request.time
+        && (r.lastIngestAt == null || request.time > r.lastIngestAt + duration.value(3, 's'))
+        && (r.lastCapturedAt == null || (d.lastCapturedAt is timestamp && d.lastCapturedAt >= r.lastCapturedAt))
+        && (d.lastCapturedAt == null || (d.lastCapturedAt is timestamp && d.lastCapturedAt <= request.time + duration.value(2, 'm')));
     }
+    function endOk(r, d) {
+      return r.status == 'aktif' && d.status == 'selesai'
+        && d.diff(r).affectedKeys().hasOnly(['status', 'selesaiAt', 'endedReason', 'endedBy'])
+        && d.selesaiAt == request.time && d.endedBy == request.auth.uid && d.endedReason in endReasons();
+    }
+    match /sesi/{sid} {
+      allow read: if (signedIn() && resource.data.uid == request.auth.uid && active()) || canSeeLocation(resource.data.unitId);
+      allow create: if active() && n().uid == request.auth.uid && n().keys().hasOnly(sesiKeys()) && canStart(sid, n());
+      allow update: if active() && ingestOk(resource.data, n());
+      allow update: if endOk(resource.data, n())
+        && ((signedIn() && resource.data.uid == request.auth.uid) || canSeeLocation(resource.data.unitId));
+      allow update: if isSys() && resource.data.status == 'selesai' && changed(['titikDihapus', 'titikDihapusAt'])
+        && n().titikDihapus == true && n().titikDihapusAt == request.time;
+      allow delete: if false;
+
+      // Riwayat titik: hanya dibuat pemilik sesi bersamaan dengan kenaikan lastSeq; tidak dapat diubah.
+      match /titik/{pid} {
+        function sesi() { return get(doc_('sesi', sid)).data; }
+        allow read: if (signedIn() && sesi().uid == request.auth.uid && active()) || canSeeLocation(sesi().unitId);
+        allow create: if active() && sesi().uid == request.auth.uid && sesi().status == 'aktif'
+          && n().keys().hasOnly(['seq', 'lat', 'lng', 'acc', 'capturedAt', 'receivedAt', 'deviceId', 'quality', 'terlambat'])
+          && n().seq is int && pid == string(n().seq)
+          && n().seq > sesi().lastSeq && n().seq <= getAfter(doc_('sesi', sid)).data.lastSeq
+          && n().deviceId == sesi().deviceId
+          && isLat(n().lat) && isLng(n().lng) && n().acc is number && n().acc >= 0 && n().acc <= 100000
+          && n().capturedAt is timestamp && n().capturedAt <= request.time + duration.value(2, 'm')
+          && n().capturedAt >= sesi().mulaiAt - duration.value(1, 'm')
+          && n().receivedAt == request.time
+          && n().quality is list && n().quality.size() <= 3 && n().quality.hasOnly(['akurasi_rendah', 'koordinat_nol', 'lompatan_tidak_wajar'])
+          && n().terlambat is bool;
+        allow update: if false;
+        allow delete: if isSys();
+      }
+    }
+
+    // Posisi terakhir per sesi (dipisah dari riwayat agar pembacaan dashboard murah).
+    match /lokasi_terkini/{lid} {
+      function sesiAfter() { return getAfter(doc_('sesi', lid)).data; }
+      allow read: if (signedIn() && resource.data.uid == request.auth.uid && active()) || canSeeLocation(resource.data.unitId);
+      allow create: if active() && n().uid == request.auth.uid && !exists(doc_('sesi', lid)) && sesiAfter().uid == request.auth.uid
+        && n().keys().hasOnly(['uid', 'unitId', 'kegiatanId', 'kegiatanJudul', 'nama', 'pangkat', 'sessionId', 'status', 'mulaiAt', 'selesaiAt', 'endedReason',
+                               'lat', 'lng', 'acc', 'capturedAt', 'receivedAt', 'quality', 'updatedAt'])
+        && n().sessionId == lid && n().status == 'aktif' && n().unitId == sesiAfter().unitId && n().kegiatanId == sesiAfter().kegiatanId
+        && n().kegiatanJudul == sesiAfter().kegiatanJudul && n().nama == sesiAfter().nama && n().pangkat == sesiAfter().pangkat
+        && n().lat == null && n().lng == null && n().acc == null && n().capturedAt == null && n().receivedAt == null && n().quality.size() == 0
+        && n().mulaiAt == request.time && n().updatedAt == request.time && n().selesaiAt == null && n().endedReason == null;
+      // Titik lama (antrean offline / tidak berurutan) tidak dapat menggantikan posisi terkini.
+      allow update: if active() && resource.data.uid == request.auth.uid && resource.data.status == 'aktif'
+        && changed(['lat', 'lng', 'acc', 'capturedAt', 'receivedAt', 'quality', 'updatedAt'])
+        && isLat(n().lat) && isLng(n().lng) && n().acc is number && n().acc >= 0
+        && n().capturedAt is timestamp && (resource.data.capturedAt == null || n().capturedAt > resource.data.capturedAt)
+        && n().capturedAt == sesiAfter().lastCapturedAt && sesiAfter().lastIngestAt == request.time
+        && n().receivedAt == request.time && n().updatedAt == request.time
+        && n().quality is list && n().quality.size() <= 3;
+      allow update: if resource.data.status == 'aktif' && n().status == 'selesai'
+        && changed(['status', 'selesaiAt', 'endedReason', 'updatedAt'])
+        && n().selesaiAt == request.time && n().updatedAt == request.time && sesiAfter().status == 'selesai'
+        && ((signedIn() && resource.data.uid == request.auth.uid) || canSeeLocation(resource.data.unitId));
+      allow delete: if isSys() && sesiAfter().titikDihapus == true;
+    }
+
+    // Kunci satu sesi aktif per personel. Ditimpa hanya jika sesi lama sudah tidak aktif.
     match /sesi_aktif/{uid} {
-      allow read: if signedIn() && request.auth.uid == uid && active();
-      allow write: if false;
+      allow read: if (signedIn() && request.auth.uid == uid) || canSeeLocation(resource.data.unitId);
+      allow create, update: if active() && request.auth.uid == uid
+        && n().keys().hasOnly(['sessionId', 'deviceId', 'kegiatanId', 'unitId', 'at']) && n().at == request.time
+        && !exists(doc_('sesi', n().sessionId))
+        && getAfter(doc_('sesi', n().sessionId)).data.uid == uid
+        && n().deviceId == getAfter(doc_('sesi', n().sessionId)).data.deviceId
+        && n().kegiatanId == getAfter(doc_('sesi', n().sessionId)).data.kegiatanId
+        && n().unitId == getAfter(doc_('sesi', n().sessionId)).data.unitId
+        && (resource == null || !exists(doc_('sesi', resource.data.sessionId)) || get(doc_('sesi', resource.data.sessionId)).data.status != 'aktif');
+      allow delete: if ((signedIn() && request.auth.uid == uid) || canSeeLocation(resource.data.unitId))
+        && (!existsAfter(doc_('sesi', resource.data.sessionId)) || getAfter(doc_('sesi', resource.data.sessionId)).data.status != 'aktif');
     }
 
     // ── Titik manual (input operator) ──
     match /titik_manual/{id} {
       allow read: if canSeeLocation(resource.data.unitId) || isReviewerOf(resource.data.unitId);
-      allow create, update: if canManageUnit(request.resource.data.unitId)
+      allow create, update: if canManageUnit(n().unitId)
         && (resource == null || canManageUnit(resource.data.unitId))
-        && request.resource.data.keys().hasOnly(['nama', 'keterangan', 'unitId', 'kegiatanId', 'lat', 'lng', 'createdBy', 'updatedAt'])
-        && isStr(request.resource.data.nama, 2, 120) && optStr(request.resource.data.keterangan, 500)
-        && optStr(request.resource.data.kegiatanId, 64)
-        && isLat(request.resource.data.lat) && isLng(request.resource.data.lng)
-        && request.resource.data.createdBy == (resource == null ? request.auth.uid : resource.data.createdBy)
-        && request.resource.data.updatedAt == request.time;
+        && n().keys().hasOnly(['nama', 'keterangan', 'unitId', 'kegiatanId', 'lat', 'lng', 'createdBy', 'updatedAt'])
+        && isStr(n().nama, 2, 120) && optStr(n().keterangan, 500)
+        && optStr(n().kegiatanId, 64)
+        && isLat(n().lat) && isLng(n().lng)
+        && n().createdBy == (resource == null ? request.auth.uid : resource.data.createdBy)
+        && n().updatedAt == request.time;
       allow delete: if canManageUnit(resource.data.unitId);
     }
 
@@ -118,65 +259,106 @@ service cloud.firestore {
     }
     function validIsiLaporan(d) {
       return isStr(d.judul, 3, 160) && optStr(d.isi, 5000) && validLokasi(d.lokasi)
-        && d.fotoPaths is list && d.fotoPaths.size() <= 10;
+        && d.fotoIds is list && d.fotoIds.size() <= 10;
     }
-    function kegiatanOf(id) { return get(/databases/$(database)/documents/kegiatan/$(id)).data; }
     match /laporan/{id} {
       allow read: if (active() && resource.data.uid == request.auth.uid) || canSeeLocation(resource.data.unitId) || isReviewerOf(resource.data.unitId);
 
       allow create: if active()
-        && request.resource.data.keys().hasOnly(['uid', 'unitId', 'kegiatanId', 'kegiatanJudul', 'judul', 'isi', 'lokasi', 'fotoPaths', 'status',
-                                                  'pemeriksaUid', 'diperiksaAt', 'catatanRevisi', 'createdAt', 'updatedAt', 'diajukanAt'])
-        && request.resource.data.uid == request.auth.uid
-        && request.auth.uid in kegiatanOf(request.resource.data.kegiatanId).pesertaUids
-        && request.resource.data.unitId == kegiatanOf(request.resource.data.kegiatanId).unitId
-        && optStr(request.resource.data.kegiatanJudul, 160)
-        && validIsiLaporan(request.resource.data)
-        && request.resource.data.status in ['draf', 'diajukan']
-        && request.resource.data.pemeriksaUid == null && request.resource.data.diperiksaAt == null && request.resource.data.catatanRevisi == null
-        && request.resource.data.createdAt == request.time && request.resource.data.updatedAt == request.time
-        && (request.resource.data.status == 'draf' ? request.resource.data.diajukanAt == null : request.resource.data.diajukanAt == request.time);
+        && n().keys().hasOnly(['uid', 'unitId', 'kegiatanId', 'kegiatanJudul', 'judul', 'isi', 'lokasi', 'fotoIds', 'status',
+                               'pemeriksaUid', 'diperiksaAt', 'catatanRevisi', 'createdAt', 'updatedAt', 'diajukanAt'])
+        && n().uid == request.auth.uid
+        && request.auth.uid in get(doc_('kegiatan', n().kegiatanId)).data.pesertaUids
+        && n().unitId == get(doc_('kegiatan', n().kegiatanId)).data.unitId
+        && optStr(n().kegiatanJudul, 160)
+        && validIsiLaporan(n())
+        && n().status in ['draf', 'diajukan']
+        && n().pemeriksaUid == null && n().diperiksaAt == null && n().catatanRevisi == null
+        && n().createdAt == request.time && n().updatedAt == request.time
+        && (n().status == 'draf' ? n().diajukanAt == null : n().diajukanAt == request.time);
 
       // Pemilik: hanya saat Draf / Perlu Revisi; hanya isi + pengajuan.
       allow update: if active() && resource.data.uid == request.auth.uid
         && resource.data.status in ['draf', 'perlu_revisi']
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['judul', 'isi', 'lokasi', 'fotoPaths', 'status', 'updatedAt', 'diajukanAt'])
-        && validIsiLaporan(request.resource.data)
-        && request.resource.data.updatedAt == request.time
-        && ((resource.data.status == 'draf' && request.resource.data.status == 'draf')
-            || (resource.data.status == 'perlu_revisi' && request.resource.data.status == 'perlu_revisi')
-            || (request.resource.data.status == 'diajukan' && request.resource.data.diajukanAt == request.time));
+        && changed(['judul', 'isi', 'lokasi', 'fotoIds', 'status', 'updatedAt', 'diajukanAt'])
+        && validIsiLaporan(n())
+        && n().updatedAt == request.time
+        && ((resource.data.status == 'draf' && n().status == 'draf' && n().diajukanAt == resource.data.diajukanAt)
+            || (resource.data.status == 'perlu_revisi' && n().status == 'perlu_revisi' && n().diajukanAt == resource.data.diajukanAt)
+            || (n().status == 'diajukan' && n().diajukanAt == request.time));
 
       // Pemeriksa: hanya dari Diajukan, bukan laporan sendiri.
       allow update: if isReviewerOf(resource.data.unitId) && resource.data.uid != request.auth.uid
         && resource.data.status == 'diajukan'
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'pemeriksaUid', 'diperiksaAt', 'catatanRevisi', 'updatedAt'])
-        && request.resource.data.pemeriksaUid == request.auth.uid
-        && request.resource.data.diperiksaAt == request.time && request.resource.data.updatedAt == request.time
-        && ((request.resource.data.status == 'perlu_revisi' && isStr(request.resource.data.catatanRevisi, 3, 2000))
-            || (request.resource.data.status == 'disetujui' && optStr(request.resource.data.catatanRevisi, 2000)));
+        && changed(['status', 'pemeriksaUid', 'diperiksaAt', 'catatanRevisi', 'updatedAt'])
+        && n().pemeriksaUid == request.auth.uid
+        && n().diperiksaAt == request.time && n().updatedAt == request.time
+        && ((n().status == 'perlu_revisi' && isStr(n().catatanRevisi, 3, 2000))
+            || (n().status == 'disetujui' && optStr(n().catatanRevisi, 2000)));
 
       allow delete: if active() && resource.data.uid == request.auth.uid && resource.data.status == 'draf';
+
+      // Foto dokumentasi (dikompres di perangkat, disimpan sebagai data URL). Lingkup akses = lingkup laporan.
+      match /foto/{fid} {
+        function L() { return get(doc_('laporan', id)).data; }
+        function LA() { return getAfter(doc_('laporan', id)).data; }
+        allow read: if (active() && L().uid == request.auth.uid) || canSeeLocation(L().unitId) || isReviewerOf(L().unitId);
+        allow create: if active() && LA().uid == request.auth.uid
+          && (!exists(doc_('laporan', id)) || L().status in ['draf', 'perlu_revisi'])
+          && fid in LA().fotoIds
+          && n().keys().hasOnly(['data', 'mime', 'w', 'h', 'uid', 'createdAt'])
+          && n().uid == request.auth.uid && n().createdAt == request.time
+          && n().mime in ['image/jpeg', 'image/webp'] && n().data is string && n().data.size() < 1000000
+          && n().w is int && n().h is int && n().w > 0 && n().h > 0 && n().w <= 2000 && n().h <= 2000;
+        allow update: if false;
+        allow delete: if active() && L().uid == request.auth.uid && L().status in ['draf', 'perlu_revisi'] && !(fid in LA().fotoIds);
+      }
     }
 
-    // ── Pengaturan sistem ──
+    // ── Pengaturan ──
     match /pengaturan/umum {
       allow read: if active();
       allow write: if isSys()
-        && request.resource.data.keys().hasOnly(['staleMinutes', 'captureIntervalSec', 'sendIntervalSec', 'maxQueue', 'maxBatch',
-                                                  'minIngestGapMs', 'autoEndMinutes', 'retentionDays', 'updatedBy', 'updatedAt'])
-        && request.resource.data.staleMinutes is int && request.resource.data.staleMinutes >= 1 && request.resource.data.staleMinutes <= 120
-        && request.resource.data.captureIntervalSec is int && request.resource.data.captureIntervalSec >= 5 && request.resource.data.captureIntervalSec <= 300
-        && request.resource.data.sendIntervalSec is int && request.resource.data.sendIntervalSec >= 10 && request.resource.data.sendIntervalSec <= 600
-        && request.resource.data.maxQueue is int && request.resource.data.maxQueue >= 50 && request.resource.data.maxQueue <= 2000
-        && request.resource.data.autoEndMinutes is int && request.resource.data.autoEndMinutes >= 30 && request.resource.data.autoEndMinutes <= 1440
-        && request.resource.data.retentionDays is int && request.resource.data.retentionDays >= 7 && request.resource.data.retentionDays <= 730
-        && request.resource.data.updatedBy == request.auth.uid && request.resource.data.updatedAt == request.time;
+        && n().keys().hasOnly(['staleMinutes', 'captureIntervalSec', 'sendIntervalSec', 'maxQueue', 'autoEndMinutes', 'retentionDays', 'updatedBy', 'updatedAt'])
+        && n().staleMinutes is int && n().staleMinutes >= 1 && n().staleMinutes <= 120
+        && n().captureIntervalSec is int && n().captureIntervalSec >= 5 && n().captureIntervalSec <= 300
+        && n().sendIntervalSec is int && n().sendIntervalSec >= 10 && n().sendIntervalSec <= 600
+        && n().maxQueue is int && n().maxQueue >= 50 && n().maxQueue <= 2000
+        && n().autoEndMinutes is int && n().autoEndMinutes >= 30 && n().autoEndMinutes <= 1440
+        && n().retentionDays is int && n().retentionDays >= 7 && n().retentionDays <= 730
+        && n().updatedBy == request.auth.uid && n().updatedAt == request.time;
     }
+    match /pengaturan/pemeliharaan {
+      allow read: if isSys();
+      allow write: if isSys()
+        && n().keys().hasOnly(['lastRunAt', 'lastRunBy', 'autoEnded', 'purgedSessions', 'purgedPoints'])
+        && n().lastRunAt == request.time && n().lastRunBy == request.auth.uid;
+    }
+    // pengaturan/bootstrap ({emails: [...]}) hanya diisi pemilik project lewat Console; tidak dapat dibaca/ditulis klien.
 
-    // ── Audit & aktivitas: hanya Functions yang menulis ──
-    match /audit/{id} { allow read: if isSys(); allow write: if false; }
-    match /aktivitas/{id} { allow read: if isSys() || (resource.data.unitId != null && isStaffOf(resource.data.unitId)); allow write: if false; }
+    // ── Audit (staf) & aktivitas (umpan per unit, tanpa koordinat) ──
+    match /audit/{id} {
+      allow read: if isSys();
+      allow create: if hasRole(['sysadmin', 'operator', 'pemeriksa', 'pembaca'])
+        && n().keys().hasOnly(['jenis', 'actorUid', 'unitId', 'ringkasan', 'target', 'at'])
+        && n().actorUid == request.auth.uid && n().at == request.time
+        && isStr(n().jenis, 3, 40) && isStr(n().ringkasan, 1, 300) && optStr(n().target, 128) && optStr(n().unitId, 64);
+      allow update, delete: if false;
+    }
+    match /aktivitas/{id} {
+      function A() { return getAfter(doc_('akses', request.auth.uid)).data; }
+      allow read: if isSys() || (resource.data.unitId != null && isStaffOf(resource.data.unitId));
+      allow create: if signedIn() && A().status == 'active'
+        && n().keys().hasOnly(['jenis', 'actorUid', 'unitId', 'ringkasan', 'at'])
+        && n().actorUid == request.auth.uid && n().at == request.time
+        && isStr(n().jenis, 3, 40) && isStr(n().ringkasan, 1, 300) && optStr(n().unitId, 64)
+        && (A().role == 'sysadmin'
+            || (n().unitId != null && (n().unitId == A().unitId || n().unitId in A().unitScope))
+            // peserta kegiatan unit lain: unit diambil dari kunci sesi miliknya sendiri
+            || (existsAfter(doc_('sesi_aktif', request.auth.uid)) && getAfter(doc_('sesi_aktif', request.auth.uid)).data.unitId == n().unitId)
+            || (exists(doc_('sesi_aktif', request.auth.uid)) && get(doc_('sesi_aktif', request.auth.uid)).data.unitId == n().unitId));
+      allow update, delete: if false;
+    }
 
     match /{document=**} { allow read, write: if false; }
   }

@@ -1,15 +1,13 @@
 // Aplikasi anggota: tracking berbasis sesi + laporan kegiatan.
-import { auth, db, F, call, errText, onAuthStateChanged, signOut, storage, DZ } from './firebase.js';
+import { auth, db, F, dz, errText, onAuthStateChanged, signOut, DZ } from './firebase.js';
 import { GoogleAuthProvider, signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
-import { ref as sRef, uploadBytes, getBlob } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js';
-import { TrackingQueue, classifyCallError, classifyGeoError, fmtTime, ago, tsMs, esc, LABEL, createListenerScope } from './dz-core.js';
+import { TrackingQueue, classifyGeoError, fmtTime, ago, tsMs, esc, LABEL, createListenerScope, mergeSettings, MAX_BATCH, MIN_INGEST_GAP_MS } from './dz-core.js';
 
 const $ = (id) => document.getElementById(id);
 const show = (id, on = true) => { $(id).hidden = !on; };
 function toast(m, t = 'ok') { const e = $('toast'); e.textContent = m; e.className = 'toast show ' + t; clearTimeout(toast._t); toast._t = setTimeout(() => (e.className = 'toast'), 3500); }
 
-const DEFAULTS = { captureIntervalSec: 15, sendIntervalSec: 30, maxQueue: 500, maxBatch: 100, staleMinutes: 5 };
-let cfg = { ...DEFAULTS };
+let cfg = mergeSettings({});
 let me = null;            // { uid, email, akses }
 let kegiatan = [];        // kegiatan yang ditugaskan
 const subs = createListenerScope();
@@ -128,30 +126,45 @@ function scheduleFlush(ms) {
 }
 async function flush() {
   clearTimeout(T.flushTimer);
-  if (!T.session || !T.queue) return;
+  if (!T.session || !T.queue || T.sending) return;
   const next = () => scheduleFlush(Math.max(cfg.sendIntervalSec * 1000, T.backoffMs));
   if (!T.queue.size) { if (T.syncState !== 'idle') T.syncState = 'ok'; render(); return next(); }
   if (!navigator.onLine) { T.syncState = 'offline'; render(); return next(); }
-  T.syncState = 'sending'; render();
+  T.syncState = 'sending'; T.sending = true; render();
   try {
-    const pts = T.queue.peek(cfg.maxBatch);
-    const r = await call('dzIngestPoints', { sessionId: T.session.sessionId, deviceId, points: pts });
-    T.queue.ack([...r.accepted, ...r.duplicates, ...r.rejected.map((x) => x.seq).filter((x) => x != null)]);
+    const r = await dz.ingest(T.state, T.queue.peek(MAX_BATCH));
+    T.queue.ack(r.acked);
+    T.state.lastSeq = r.lastSeq; T.state.lastCapturedAtMs = r.lastCapturedAtMs; if (r.prevFix) T.state.prevFix = r.prevFix;
     T.lastSyncMs = Date.now(); T.syncState = 'ok'; T.backoffMs = 0;
+    try { sessionStorage.removeItem('dz-reload-diagnosa'); } catch { /* abaikan */ }
     render();
-    // Masih ada antrean (mis. setelah offline lama) → kirim batch berikutnya setelah jeda server.
-    if (T.queue.size) return scheduleFlush(4500);
+    // Masih ada antrean (mis. setelah offline lama) → kirim batch berikutnya setelah jeda minimum.
+    if (T.queue.size) { T.sending = false; return scheduleFlush(MIN_INGEST_GAP_MS + 1500); }
   } catch (e) {
-    const k = classifyCallError(e);
+    const k = e.code;
+    T.sending = false;
     if (k === 'session_closed') return endLocal(`Sesi telah ditutup${e.details?.endedReason ? ' (' + (LABEL.endedReason[e.details.endedReason] || e.details.endedReason) + ')' : ''}. Titik baru tidak dikirim.`);
     if (k === 'other_device') return endLocal('Sesi ini sedang berjalan di perangkat lain. Tracking di perangkat ini dihentikan.');
-    if (k === 'account_inactive' || k === 'forbidden') return endLocal('Akun Anda tidak aktif atau akses dicabut. Tracking dihentikan.');
-    if (k === 'signed_out') return endLocal('Sesi login berakhir. Silakan masuk kembali.');
-    if (k === 'drop') { T.queue.ack(T.queue.peek(cfg.maxBatch).map((p) => p.seq)); T.syncState = 'error'; }
+    if (k === 'account_inactive') { endLocal('Akun Anda tidak aktif atau akses dicabut. Tracking dihentikan.'); setTimeout(() => location.reload(), 3000); return; }
+    if (k === 'rejected') {
+      // Ditolak tanpa sebab yang dapat dipastikan (mis. status akses berubah tetapi koneksi pantau belum
+      // menerimanya). Muat ulang sekali dengan koneksi baru; antrean tetap tersimpan di perangkat.
+      let reloaded = false;
+      try { reloaded = sessionStorage.getItem('dz-reload-diagnosa') === T.state.sessionId; } catch { /* abaikan */ }
+      if (!reloaded) {
+        try { sessionStorage.setItem('dz-reload-diagnosa', T.state.sessionId); } catch { /* abaikan */ }
+        stopWatch(); releaseTabLock(); location.reload(); return;
+      }
+      try { sessionStorage.removeItem('dz-reload-diagnosa'); } catch { /* abaikan */ }
+      T.queue.ack(T.queue.peek(MAX_BATCH).map((p) => p.seq)); T.syncState = 'error';
+      if (Number.isInteger(e.details?.lastSeq)) T.state.lastSeq = e.details.lastSeq;
+    }
     else if (k === 'backoff') { T.backoffMs = Math.max(5000, e.details?.retryAfterMs || 5000); T.syncState = 'backoff'; }
+    else if (/resource-exhausted/.test(String(k))) { T.backoffMs = 600000; T.syncState = 'error'; setErr('Kuota harian database tercapai. Titik disimpan di perangkat dan dikirim ulang nanti.'); }
     else { T.backoffMs = Math.min(300000, Math.max(10000, T.backoffMs * 2)); T.syncState = navigator.onLine ? 'error' : 'offline'; }
     render();
   }
+  T.sending = false;
   next();
 }
 addEventListener('online', () => { if (T.session) { T.backoffMs = 0; scheduleFlush(300); } });
@@ -194,12 +207,14 @@ document.addEventListener('visibilitychange', () => {
 /* ── Sesi ── */
 function attachSession(s) {
   T.session = s;
+  T.state = { sessionId: s.sessionId, deviceId, sessionStartMs: s.mulaiAtMs ?? null, lastSeq: s.lastSeq ?? -1, lastCapturedAtMs: s.lastCapturedAtMs ?? null, prevFix: null };
   T.queue = new TrackingQueue({ storage: safeStorage, sessionId: s.sessionId, maxSize: cfg.maxQueue, key: 'dz-queue-' + me.uid });
   if (Number.isInteger(s.lastSeq)) T.queue.ensureSeqAfter(s.lastSeq);
   // Pantau sesi di server: ditutup operator/sistem → hentikan.
   T.sesiUnsub?.();
   T.sesiUnsub = F.onSnapshot(F.doc(db, 'sesi', s.sessionId), (snap) => {
     const d = snap.data();
+    if (d && T.state && Number.isInteger(d.lastSeq) && d.lastSeq > T.state.lastSeq) { T.state.lastSeq = d.lastSeq; T.state.lastCapturedAtMs = d.lastCapturedAt?.toMillis?.() ?? T.state.lastCapturedAtMs; }
     if (d && d.status !== 'aktif' && !T.stopping) endLocal(`Sesi diakhiri (${LABEL.endedReason[d.endedReason] || d.endedReason || 'server'}).`);
   }, () => { /* izin dicabut → ditangani saat kirim berikutnya */ });
   scheduleFlush(500);
@@ -210,15 +225,15 @@ function endLocal(msg) {
   clearTimeout(T.flushTimer);
   T.sesiUnsub?.(); T.sesiUnsub = null;
   T.queue?.clear(); // sesi ditutup: titik tersisa tidak dapat diterima server
-  T.session = null; T.queue = null; T.lastFix = null; T.syncState = 'idle'; T.stopping = false;
+  T.session = null; T.queue = null; T.state = null; T.sending = false; T.lastFix = null; T.syncState = 'idle'; T.stopping = false;
   if (T.wakeLock) T.wakeLock.release().catch(() => {});
   setInfo(''); show('retryBtn', false); show('otherBtn', false);
   if (msg) setErr(msg);
   render();
 }
 
-async function requestLocationOnce() {
-  return new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }));
+async function requestLocationOnce(maximumAge = 0) {
+  return new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: true, timeout: 20000, maximumAge }));
 }
 
 $('startBtn').onclick = async () => {
@@ -230,17 +245,17 @@ $('startBtn').onclick = async () => {
     // Minta izin lokasi setelah tindakan pengguna, sebelum sesi dibuat.
     $('vPerm').textContent = 'Meminta izin…';
     try { const p = await requestLocationOnce(); onFix.first = p; } catch (ge) { onGeoError(ge); if (ge.code === 1) return; }
-    const r = await call('dzStartSession', { kegiatanId, deviceId });
+    const r = await dz.startSession({ uid: me.uid, kegiatanId, deviceId });
     const k = kegiatan.find((x) => x.id === kegiatanId);
     acquireTabLock(() => {
-      attachSession({ sessionId: r.sessionId, kegiatanId, kegiatanJudul: k?.judul || '', lastSeq: r.lastSeq });
+      attachSession({ sessionId: r.sessionId, kegiatanId, kegiatanJudul: k?.judul || '', lastSeq: r.lastSeq, mulaiAtMs: r.mulaiAtMs, lastCapturedAtMs: r.lastCapturedAtMs });
       startWatch();
       if (onFix.first) { onFix(onFix.first); onFix.first = null; }
       applyWake();
       toast(r.resumed ? 'Sesi tracking dilanjutkan.' : 'Tracking dimulai.');
     });
   } catch (e) {
-    if ((e.code || '').endsWith('already-exists')) {
+    if (e.code === 'already-exists') {
       const d = e.details || {};
       setErr(d.perangkatLain ? 'Masih ada sesi tracking aktif di perangkat/browser lain. Akhiri sesi tersebut untuk memulai di sini.' : 'Masih ada sesi tracking aktif untuk kegiatan lain. Akhiri sesi tersebut terlebih dahulu.');
       T.otherSessionId = d.sessionId; show('otherBtn', true);
@@ -259,7 +274,7 @@ $('retryBtn').onclick = async () => {
 };
 $('otherBtn').onclick = async () => {
   if (!T.otherSessionId || !confirm('Akhiri sesi tracking yang masih aktif (di perangkat/tab lain)?')) return;
-  try { await call('dzEndSession', { sessionId: T.otherSessionId, reason: 'pindah_perangkat' }); show('otherBtn', false); setErr(''); toast('Sesi lama diakhiri. Silakan mulai tracking.'); }
+  try { await dz.endSession({ sessionId: T.otherSessionId, reason: 'pindah_perangkat', actorUid: me.uid }); show('otherBtn', false); setErr(''); toast('Sesi lama diakhiri. Silakan mulai tracking.'); }
   catch (e) { setErr(errText(e)); }
 };
 
@@ -270,8 +285,9 @@ async function endSession(reason) {
   for (let i = 0; i < 3 && T.queue?.size && navigator.onLine; i++) { await flush(); if (T.queue?.size) await new Promise((r) => setTimeout(r, 4600)); }
   const left = T.queue?.size || 0;
   if (left && !confirm(`${left} titik lokasi belum terkirim (koneksi bermasalah). Jika sesi diakhiri sekarang, titik tersebut tidak akan tersimpan. Tetap akhiri?`)) { T.stopping = false; return false; }
-  try { await call('dzEndSession', { sessionId: T.session.sessionId, reason }); }
-  catch (e) { if (classifyCallError(e) === 'retry') { T.stopping = false; setErr('Gagal mengakhiri sesi: ' + errText(e) + ' Coba lagi saat koneksi tersedia.'); return false; } }
+  if (!navigator.onLine) { T.stopping = false; setErr('Tidak ada koneksi. Sesi dapat diakhiri setelah koneksi tersedia.'); return false; }
+  try { await dz.endSession({ sessionId: T.session.sessionId, reason, actorUid: me.uid }); }
+  catch (e) { if (e.code !== 'permission-denied' && e.code !== 'not-found') { T.stopping = false; setErr('Gagal mengakhiri sesi: ' + errText(e)); return false; } }
   endLocal('');
   toast('Tracking diakhiri.');
   return true;
@@ -288,7 +304,7 @@ addEventListener('beforeunload', (e) => { if (T.session && T.watchId != null) { 
 
 /* ═════════ Data anggota ═════════ */
 async function loadSettings() {
-  try { const s = await F.getDoc(F.doc(db, 'pengaturan', 'umum')); if (s.exists()) cfg = { ...DEFAULTS, ...s.data() }; } catch { /* pakai bawaan */ }
+  try { const s = await F.getDoc(F.doc(db, 'pengaturan', 'umum')); cfg = mergeSettings(s.exists() ? s.data() : {}); } catch { cfg = mergeSettings({}); }
   $('vMaxQ').textContent = cfg.maxQueue;
 }
 
@@ -323,7 +339,7 @@ async function checkExistingSession() {
       return;
     }
     acquireTabLock(() => {
-      attachSession({ sessionId: l.sessionId, kegiatanId: l.kegiatanId, kegiatanJudul: s.data().kegiatanJudul, lastSeq: s.data().lastSeq });
+      attachSession({ sessionId: l.sessionId, kegiatanId: l.kegiatanId, kegiatanJudul: s.data().kegiatanJudul, lastSeq: s.data().lastSeq, mulaiAtMs: s.data().mulaiAt?.toMillis?.() ?? null, lastCapturedAtMs: s.data().lastCapturedAt?.toMillis?.() ?? null });
       if (!T.lockedElsewhere) setInfo('Sesi tracking sebelumnya masih aktif. Tekan "Lanjutkan Tracking" untuk melanjutkan pengambilan lokasi.');
       render();
     });
@@ -361,10 +377,32 @@ function openLap(r = null, readOnly = false) {
   $('lapDlgTitle').textContent = readOnly ? 'Laporan' : r ? 'Ubah Laporan' : 'Laporan Baru';
   show('lapErr', false);
   $('lapThumbs').innerHTML = '';
-  (r?.fotoPaths || []).forEach(async (p) => {
-    try { const b = await getBlob(sRef(storage, p)); const img = new Image(); img.alt = 'foto dokumentasi'; img.src = URL.createObjectURL(b); $('lapThumbs').appendChild(img); } catch { /* tidak berwenang/terhapus */ }
-  });
+  showFotos(r);
   $('lapDlg').showModal();
+}
+/** Tampilkan foto dokumentasi (dibaca dari Firestore sesuai hak akses laporan). */
+async function showFotos(r) {
+  for (const fid of r?.fotoIds || []) {
+    try {
+      const s = await F.getDoc(F.doc(db, 'laporan', r.id, 'foto', fid));
+      const d = s.data();
+      if (!d || !/^data:image\/(jpeg|webp);base64,/.test(d.data)) continue; // hanya gambar raster yang aman
+      const img = new Image(); img.alt = 'foto dokumentasi'; img.src = d.data; $('lapThumbs').appendChild(img);
+    } catch { /* tidak berwenang */ }
+  }
+}
+/** Kompres foto di perangkat (maks. 1280 px, JPEG) agar muat di dokumen Firestore (< 1 MB). */
+async function compressImage(file) {
+  const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  for (const [max, q] of [[1280, 0.72], [1024, 0.6], [800, 0.5], [640, 0.45]]) {
+    const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const w = Math.max(1, Math.round(bmp.width * scale)), h = Math.max(1, Math.round(bmp.height * scale));
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    cv.getContext('2d').drawImage(bmp, 0, 0, w, h);
+    const data = cv.toDataURL('image/jpeg', q);
+    if (data.length < 900000) { bmp.close?.(); return { data, mime: 'image/jpeg', w, h }; }
+  }
+  throw new Error(`${file.name}: foto terlalu besar setelah dikompres.`);
 }
 $('newLapBtn').onclick = () => openLap();
 $('lapList').onclick = (e) => {
@@ -376,7 +414,7 @@ $('lapForm').pakaiLokasi.onchange = async (e) => {
   if (!e.target.checked) { lapLok = null; $('lapLokInfo').textContent = ''; return; }
   $('lapLokInfo').textContent = 'Mengambil lokasi…';
   try {
-    const p = await requestLocationOnce();
+    const p = await requestLocationOnce(60000); // lokasi laporan: posisi < 60 detik masih relevan
     lapLok = { lat: p.coords.latitude, lng: p.coords.longitude, acc: Math.round(p.coords.accuracy * 10) / 10, capturedAtMs: Math.round(p.timestamp) };
     $('lapLokInfo').textContent = `Lokasi laporan: ±${Math.round(lapLok.acc)} m · ${fmtTime(lapLok.capturedAtMs)}`;
   } catch (ge) { e.target.checked = false; lapLok = null; $('lapLokInfo').textContent = classifyGeoError(ge).text; }
@@ -392,28 +430,31 @@ $('lapForm').addEventListener('submit', async (e) => {
   if (!kId || (!k && !editing)) return err('Pilih kegiatan.');
   if (f.judul.value.trim().length < 3) return err('Judul minimal 3 karakter.');
   const files = [...f.foto.files];
-  const existing = editing?.fotoPaths || [];
+  const existing = editing?.fotoIds || [];
   if (existing.length + files.length > 10) return err('Maksimal 10 foto per laporan.');
-  for (const fl of files) { if (fl.size > 5 * 1024 * 1024) return err(`${fl.name} melebihi 5 MB.`); if (!/^image\/(jpeg|png|webp)$/.test(fl.type)) return err(`${fl.name}: format harus JPG/PNG/WebP.`); }
+  for (const fl of files) { if (fl.size > 25 * 1024 * 1024) return err(`${fl.name} melebihi 25 MB.`); if (!/^image\//.test(fl.type)) return err(`${fl.name}: bukan file gambar.`); }
   [...f.elements].forEach((el) => (el.disabled = true));
   try {
     const ref = editing ? F.doc(db, 'laporan', editing.id) : F.doc(F.collection(db, 'laporan'));
     const unitId = editing?.unitId || k.unitId;
-    const paths = [...existing];
-    for (const fl of files) {
-      const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }[fl.type];
-      const path = `laporan/${unitId}/${me.uid}/${ref.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-      await uploadBytes(sRef(storage, path), fl, { contentType: fl.type });
-      paths.push(path);
-    }
+    $('lapErr').textContent = files.length ? 'Mengompres foto…' : ''; show('lapErr', !!files.length);
+    const fotos = [];
+    for (const fl of files) fotos.push({ id: 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ...(await compressImage(fl)) });
     const now = F.serverTimestamp();
-    const content = { judul: f.judul.value.trim(), isi: f.isi.value.trim(), lokasi: lapLok, fotoPaths: paths, updatedAt: now };
+    const content = { judul: f.judul.value.trim(), isi: f.isi.value.trim(), lokasi: lapLok, fotoIds: [...existing, ...fotos.map((x) => x.id)], updatedAt: now };
     if (action === 'diajukan') Object.assign(content, { status: 'diajukan', diajukanAt: now });
-    if (editing) await F.updateDoc(ref, content);
-    else await F.setDoc(ref, {
+    // Laporan + foto ditulis atomik dalam satu batch (Rules memeriksa daftar fotoIds).
+    const b = F.writeBatch(db);
+    if (editing) b.update(ref, content);
+    else b.set(ref, {
       uid: me.uid, unitId, kegiatanId: kId, kegiatanJudul: k.judul, status: 'draf', pemeriksaUid: null, diperiksaAt: null,
       catatanRevisi: null, createdAt: now, diajukanAt: null, ...content,
     });
+    for (const x of fotos) b.set(F.doc(ref, 'foto', x.id), { data: x.data, mime: x.mime, w: x.w, h: x.h, uid: me.uid, createdAt: now });
+    if (action === 'diajukan' && unitId === me.akses.unitId) {
+      b.set(F.doc(F.collection(db, 'aktivitas')), { jenis: 'laporan_diajukan', actorUid: me.uid, unitId, ringkasan: `Laporan "${content.judul}" diajukan`, at: now });
+    }
+    await b.commit();
     $('lapDlg').close();
     toast(action === 'diajukan' ? 'Laporan diajukan untuk diperiksa.' : 'Draf disimpan.');
   } catch (x) { err('Gagal menyimpan: ' + errText(x)); }
@@ -447,8 +488,7 @@ onAuthStateChanged(auth, async (u) => {
   if (!u) { if (T.session) endLocal(''); me = null; screen('loginBox'); show('logoutBtn', false); $('who').textContent = 'Aplikasi Anggota'; return; }
   screen('boot');
   try {
-    const a = await call('dzRegister');
-    await u.getIdToken(true); // muat klaim akses terbaru (untuk Storage)
+    const a = await dz.register(u);
     me = { uid: u.uid, email: u.email, akses: a };
     show('logoutBtn', true);
     $('who').textContent = u.email;

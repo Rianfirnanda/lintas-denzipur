@@ -30,8 +30,6 @@
 <div class="toast" id="toast"></div>
 <script type="module">
 import { guard, $, esc, F, db, fmtTime, tsMs, errText, ready, scoped, unitOptions, stateBox, LABEL } from './common.js';
-import { storage } from './js/firebase.js';
-import { ref as sRef, getBlob } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js';
 
 guard(async (ctx) => {
   const iso = (d) => new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
@@ -41,9 +39,11 @@ guard(async (ctx) => {
   const urls = new Map();
   const io = new IntersectionObserver((ents) => ents.forEach(async (en) => {
     if (!en.isIntersecting) return; io.unobserve(en.target);
-    const p = en.target.dataset.path;
-    try { if (!urls.has(p)) urls.set(p, URL.createObjectURL(await getBlob(sRef(storage, p)))); en.target.src = urls.get(p); }
-    catch { en.target.alt = 'Foto tidak dapat dimuat'; }
+    const p = en.target.dataset.path; // "laporanId/fotoId"
+    try {
+      if (!urls.has(p)) { const [lid, fid] = p.split('/'); const d = (await F.getDoc(F.doc(db, 'laporan', lid, 'foto', fid))).data(); if (d && /^data:image\/(jpeg|webp);base64,/.test(d.data)) urls.set(p, d.data); }
+      if (urls.has(p)) en.target.src = urls.get(p); else en.target.alt = 'Foto tidak tersedia';
+    } catch { en.target.alt = 'Foto tidak dapat dimuat'; }
   }), { rootMargin: '200px' });
 
   const draw = () => {
@@ -61,7 +61,7 @@ guard(async (ctx) => {
     stateBox($('state'), 'loading', 'Memuat dokumentasi…');
     try {
       const s = await F.getDocs(F.query(scoped(F.collection(db, 'laporan'), ctx, 'unitId', $('fUnit').value), F.where('createdAt', '>=', F.Timestamp.fromDate(a)), F.where('createdAt', '<=', F.Timestamp.fromDate(b)), F.orderBy('createdAt', 'desc'), F.limit(200)));
-      items = s.docs.flatMap((d) => (d.data().fotoPaths || []).map((path) => ({ path, id: d.id, ...d.data(), ms: tsMs(d.data().createdAt) })));
+      items = s.docs.flatMap((d) => (d.data().fotoIds || []).map((fid) => ({ path: d.id + '/' + fid, id: d.id, ...d.data(), ms: tsMs(d.data().createdAt) })));
       $('state').innerHTML = s.size >= 200 ? '<div class="state">Dibatasi 200 laporan terbaru; persempit rentang tanggal.</div>' : '';
       draw();
     } catch (e) { stateBox($('state'), 'err', 'Gagal memuat: ' + errText(e), load); }

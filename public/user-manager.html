@@ -63,7 +63,7 @@
 </form></dialog>
 <div class="toast" id="toast"></div>
 <script type="module">
-import { guard, $, esc, F, db, call, toast, chip, LABEL, errText, ready, scoped, unitOptions, loadUnits, stateBox, createListenerScope } from './common.js';
+import { guard, $, esc, F, db, dz, toast, chip, LABEL, errText, ready, scoped, unitOptions, loadUnits, stateBox, createListenerScope } from './common.js';
 
 guard(async (ctx) => {
   const units = (await loadUnits()).filter((u) => !ctx.scope || ctx.scope.includes(u.id));
@@ -126,7 +126,7 @@ guard(async (ctx) => {
     if (body.status === 'active' && body.role === 'anggota' && !body.unitId) return err('Anggota aktif wajib memiliki unit.');
     if (body.status === 'active' && ['operator', 'pemeriksa', 'pembaca'].includes(body.role) && !unitScope.length) return err('Pilih minimal satu unit lingkup.');
     if (body.role === 'sysadmin' && !confirm('Jadikan akun ini Administrator Sistem? Ia dapat mengelola semua unit dan akun.')) return;
-    try { await call('dzSetAccess', body); $('accDlg').close(); toast('Akses diperbarui.'); } catch (x) { err('Gagal: ' + errText(x)); }
+    try { await dz.setAccess({ uid: ctx.uid }, body.uid, body); $('accDlg').close(); toast('Akses diperbarui.'); } catch (x) { err('Gagal: ' + errText(x)); }
   });
 
   function openProf(id) {
@@ -137,7 +137,7 @@ guard(async (ctx) => {
   $('profF').addEventListener('submit', async (e) => {
     if (e.submitter?.value !== 'ok') return; e.preventDefault();
     const f = e.target;
-    try { await call('dzSavePersonel', { uid: editing, nama: f.nama.value, pangkat: f.pangkat.value, jabatan: f.jabatan.value, statusKeanggotaan: f.statusKeanggotaan.value }); $('profDlg').close(); toast('Profil disimpan.'); }
+    try { await dz.savePersonel({ uid: ctx.uid }, editing, { nama: f.nama.value, pangkat: f.pangkat.value, jabatan: f.jabatan.value, statusKeanggotaan: f.statusKeanggotaan.value }); $('profDlg').close(); toast('Profil disimpan.'); }
     catch (x) { $('profErr').textContent = 'Gagal: ' + errText(x); $('profErr').hidden = false; }
   });
 
@@ -148,8 +148,8 @@ guard(async (ctx) => {
     const id = b.dataset.block || b.dataset.del, a = akses.get(id) || {};
     const who = personel.get(id)?.nama || a.email;
     try {
-      if (b.dataset.block && confirm(`Blokir ${who}? Sesi tracking aktifnya akan ditutup.`)) { await call('dzSetAccess', { uid: id, role: a.role, status: 'blocked', unitId: a.unitId || null, unitScope: a.unitScope || [] }); toast('Akun diblokir.'); }
-      if (b.dataset.del && confirm(`Hapus ${who} dari Lintas Denzipur? Akun Google/Lintas Benteng tidak dihapus; jika login lagi akan terdaftar ulang sebagai Menunggu.`)) { await call('dzDeleteAccount', { uid: id }); toast('Akun dihapus dari Denzipur.'); }
+      if (b.dataset.block && confirm(`Blokir ${who}? Sesi tracking aktifnya akan ditutup.`)) { await dz.setAccess({ uid: ctx.uid }, id, { role: a.role, status: 'blocked', unitId: a.unitId || null, unitScope: a.unitScope || [] }); toast('Akun diblokir.'); }
+      if (b.dataset.del && confirm(`Hapus ${who} dari Lintas Denzipur? Akun Google tidak dihapus; jika login lagi akan terdaftar ulang sebagai Menunggu.`)) { await dz.deleteAccount({ uid: ctx.uid }, id); toast('Akun dihapus dari Denzipur.'); }
     } catch (x) { toast('Gagal: ' + errText(x), 'err'); }
   };
 

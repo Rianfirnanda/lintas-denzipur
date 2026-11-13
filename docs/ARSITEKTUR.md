@@ -1,141 +1,122 @@
 # Arsitektur Lintas Denzipur
 
-## Keputusan arsitektur (ADR-002): project Firebase terpisah `lintas-denzipur`
+## Keputusan arsitektur
 
-**Status:** berlaku sejak 13 Nov 2026, menggantikan ADR-001 di bawah.
+### ADR-003 (berlaku): project terpisah, paket Spark (gratis), tanpa Cloud Functions dan Storage
+**Konteks.**
+- Pemilik tidak akan memakai paket Blaze.
+- Pada paket Spark, Cloud Functions, Cloud Scheduler, dan Cloud Storage (bucket baru) tidak tersedia.
+- Layanan yang tersedia: **Authentication, Firestore, Hosting**.
 
-**Alasan.** Akun pengembang tidak memiliki izin membuat resource (database, bucket, situs) di project `lintas-benteng`; percobaan membuat database ditolak dengan HTTP 403 tanpa perubahan apa pun. Pemilik ingin database Lintas Benteng **tidak tersentuh sama sekali**. Project terpisah memberi isolasi penuh dan dimiliki langsung oleh pengembang.
+**Keputusan.**
+- **Semua penegakan akses ada di Firestore Security Rules.** Operasi yang sebelumnya dikerjakan Functions ditulis klien sebagai **batch atomik** (`public/js/dz-data.js`), lalu Rules memvalidasi seluruh isi batch dengan `get()` / `getAfter()`.
+- **Foto dokumentasi** dikompres di perangkat (maks. 1280 px, JPEG, < 1 MB) dan disimpan di Firestore pada `laporan/{id}/foto/{fid}`. Lingkup aksesnya sama dengan laporan, dan tidak ada tautan publik.
+- **Dashboard** memakai *count query* Firestore dari klien. Hasilnya otomatis mengikuti hak baca peran; kartu yang tidak boleh dilihat tampil "tidak tersedia".
+- **Pemeliharaan** berjalan dari peramban Administrator Sistem: otomatis maksimal sekali per 24 jam saat Dashboard dibuka, atau manual dari menu Pengaturan.
+- **Administrator pertama** ditetapkan pemilik project lewat dokumen `pengaturan/bootstrap` di Console. Dokumen ini tidak dapat dibaca atau ditulis klien.
 
-**Keputusan.** Semua komponen Denzipur berada di project `lintas-denzipur`:
+**Konsekuensi (jaminan yang berubah dibanding versi Functions).**
 
-| Lapisan | Lintas Benteng (`lintas-benteng`, tidak disentuh) | Lintas Denzipur (`lintas-denzipur`) |
+| Aspek | Versi Functions (ADR-002) | Versi Spark (sekarang) |
 |---|---|---|
-| Firestore | database `(default)` milik Benteng | database `(default)` milik project Denzipur |
-| Storage | bucket `lintas-benteng.firebasestorage.app` | bucket `lintas-denzipur.firebasestorage.app` |
-| Functions | codebase `default` (10 fungsi Benteng) | codebase `denzipur`, semua fungsi berawalan `dz` |
-| Hosting | situs `lintas-benteng` | situs `lintas-denzipur` |
-| Auth | daftar akun Benteng | daftar akun Denzipur tersendiri (login tetap dengan akun Google) |
+| Satu sesi aktif, tolak titik setelah sesi ditutup, tidak bisa kirim atas nama orang lain | server | **Rules** (tetap ditegakkan server) |
+| Deduplikasi & titik terlambat tidak menimpa posisi terkini | server | **Rules**: seq harus naik, `capturedAt` lokasi terkini harus lebih baru |
+| Batas frekuensi | 4 dtk per panggilan | **Rules**: ≥ 3 dtk per batch, maks. 50 titik |
+| Penanda kualitas data (akurasi rendah, lompatan) | dihitung server | dihitung **klien**; Rules hanya membatasi nilai yang diizinkan |
+| Waktu diterima server (`receivedAt`) | server | `request.time`, ditegakkan Rules |
+| Audit akses riwayat lokasi & ekspor | dijamin (lewat Functions) | **upaya terbaik**: klien menulis audit sebelum membaca/mengekspor; staf yang memodifikasi klien dapat melewatinya |
+| Umpan aktivitas & audit perubahan laporan | trigger otomatis | ditulis klien dalam batch yang sama (tidak dipaksa Rules) |
+| Menutup sesi saat akun diblokir | otomatis di server | batch administrator ikut menutup sesi; kiriman dari akun terblokir tetap ditolak Rules |
+| Penutupan sesi tanpa pembaruan & penghapusan riwayat | terjadwal setiap 30 mnt | saat sysadmin membuka Dashboard (≤ 1×/24 jam) atau manual |
+| Foto | Cloud Storage | Firestore (maks. 10 foto/laporan, terkompresi) |
 
-**Konsekuensi.**
-- Tidak ada perintah deploy di repositori ini yang dapat menargetkan `lintas-benteng`; `.firebaserc` hanya berisi `lintas-denzipur` dan `demo-denzipur` (emulator).
-- Personel mendaftar sekali di Denzipur lalu disetujui administrator (alur yang memang sudah berlaku). Klaim `dz` hanya ada di akun Auth project Denzipur.
-- Project Denzipur butuh paket Blaze sendiri (Cloud Functions, Scheduler, bucket Storage baru). Kuota gratis Firestore berlaku untuk database `(default)`-nya.
-- Data Denzipur lama di project Benteng tidak dipindah otomatis. `scripts/migrate-from-default.mjs` hanya **membaca** project Benteng dan menulis ke project Denzipur, dan hanya dijalankan manual dengan persetujuan.
-- Logo masih dimuat dari tautan publik di bucket Benteng (hanya dibaca oleh browser). Sebaiknya dipindahkan ke project Denzipur.
-- Folder `/denzipur` di situs Benteng tetap menjalankan kode lama sampai pemiliknya mengganti dengan redirect.
+### ADR-002 (digantikan): project terpisah `lintas-denzipur` dengan Blaze
+Dipilih karena akun pengembang tidak berizin membuat resource di project `lintas-benteng`, dan database Lintas Benteng tidak boleh tersentuh. Digantikan ADR-003 karena paket Blaze tidak dipakai.
 
-Bagian di bawah yang menyebut database bernama `denzipur` atau bucket `lintas-benteng-denzipur` mengacu ke ADR-001; padanannya sekarang adalah database `(default)` dan bucket default project `lintas-denzipur`. Model data, Rules, dan matriks hak akses tidak berubah.
+### ADR-001 (digantikan): database bernama di dalam project `lintas-benteng`
+Temuan awal yang tetap relevan:
+- Admin Denzipur lama menulis ke koleksi `lintas` dan `users` di database default Lintas Benteng. Akibatnya akun Denzipur muncul di daftar pengguna Benteng. Ini masalah pemisahan data, bukan desain.
+- Klien lama bisa mengaktifkan dirinya sendiri lewat `lintas_invites`.
 
-## ADR-001 (digantikan): isolasi di dalam project `lintas-benteng`
+## Pemisahan dari Lintas Benteng
 
-**Temuan awal.**
-- Admin Denzipur lama menulis profil login ke koleksi `lintas` di database Firestore **default**. Koleksi itu juga dibaca dan ditulis Lintas Benteng.
-- Manajemen User membaca `users` dengan `role == 'user-denzipur'`. Koleksi `users` adalah koleksi pengguna Lintas Benteng, sehingga akun Denzipur tampil di daftar pengguna Benteng. Ini adalah **masalah pemisahan data dan akses, bukan desain yang disengaja**: kedua aplikasi berbagi namespace dan Rules.
-- Klien bisa mengaktifkan dirinya sendiri lewat dokumen `lintas_invites`.
-- Daftar owner ditulis langsung di frontend.
-
-**Keputusan.** Denzipur tetap berada di project `lintas-benteng`, karena Auth (akun Google) dipakai bersama. Semua data dan aturannya dipisahkan:
-
-| Lapisan | Lintas Benteng (tidak diubah) | Lintas Denzipur (baru) |
+| Lapisan | Lintas Benteng (`lintas-benteng`) | Lintas Denzipur (`lintas-denzipur`) |
 |---|---|---|
-| Firestore | database `(default)`, Rules milik Benteng | **database bernama `denzipur`**, `firestore.rules` sendiri |
-| Storage | bucket default | **bucket `lintas-benteng-denzipur`**, `storage.rules` sendiri |
-| Functions | (codebase default, jika ada) | **codebase `denzipur`**, semua fungsi berawalan `dz` |
-| Hosting | situs `lintas-benteng` | **situs `lintas-denzipur`** (target `denzipur`) |
-| Auth | bersama | bersama; izin Denzipur ada di `akses/{uid}` (database denzipur) + klaim `dz` |
+| Firestore | database default Benteng — **tidak disentuh** | database default project Denzipur |
+| Auth | daftar akun Benteng | daftar akun Denzipur (login tetap dengan akun Google) |
+| Hosting | `lintas-benteng.web.app` | `lintas-denzipur.web.app` |
+| Functions/Storage | milik Benteng | tidak dipakai |
 
-**Konsekuensi.**
-- Deploy Rules, indexes, Storage, dan Functions Denzipur tidak menimpa Rules atau fungsi Benteng.
-  - Firestore Rules memiliki target per database.
-  - Storage Rules memiliki target per bucket.
-  - Functions dipisahkan per codebase.
-- Klaim kustom `dz` ditambahkan pada akun Auth bersama. Klaim lain (milik Benteng) tetap dipertahankan; ini diuji di tes 8.
-- Akun Benteng tanpa dokumen `akses` tidak dapat membaca apa pun di database `denzipur`; ini juga diuji di tes 8.
-- Folder `/denzipur` di situs Benteng masih menjalankan kode lama sampai diganti dengan redirect. Lihat [DEPLOY.md](DEPLOY.md).
-- Prasyarat: paket Blaze (Functions, database bernama, bucket tambahan, Cloud Scheduler).
-- Alternatif yang ditolak untuk saat ini: project Firebase terpisah. Isolasinya penuh, tetapi akun Google harus login di project lain, dan migrasi Auth beserta Authorized Domains perlu dikerjakan ulang. Pindah ke project terpisah tetap mudah, karena semua nama database, bucket, dan region dikonfigurasi di `public/js/config.js` dan `functions/.env`.
+`.firebaserc` di repositori ini hanya berisi `lintas-denzipur` dan `demo-denzipur` (emulator).
 
 ## Komponen
-
 ```
 public/                 Hosting (situs statis, ES modules, Firebase JS SDK 10.14.1 via gstatic)
-  admin.html            Shell admin (login Google → dzRegister → menu sesuai peran)
-  anggota.html          Aplikasi anggota (tracking berbasis sesi + laporan)
+  admin.html            Shell admin (login Google → registrasi → menu sesuai peran)
+  anggota.html          Aplikasi anggota (tracking berbasis sesi + laporan berfoto)
   home/kegiatan/tracking/laporan/dokumentasi/rekap/user-manager/unit/audit/pengaturan.html
-  js/config.js          Konfigurasi publik (+ mode emulator otomatis di localhost)
-  js/firebase.js        Inisialisasi tunggal (db bernama, functions region, bucket dokumentasi, App Check opsional)
-  js/dz-core.js         Logika murni: antrean offline, kesegaran lokasi, CSV aman, klasifikasi galat
+  js/config.js          Konfigurasi web publik (+ mode emulator otomatis di localhost)
+  js/firebase.js        Inisialisasi Auth + Firestore, App Check opsional
+  js/dz-data.js         Lapisan data: registrasi, akses, sesi, kirim titik, riwayat, dashboard, pemeliharaan
+  js/dz-core.js         Logika murni: antrean offline, validasi titik, kesegaran lokasi, CSV aman
   js/anggota.js         Logika aplikasi anggota
-functions/src/index.js  Callable + trigger + scheduler (Admin SDK, memeriksa otorisasi sendiri)
-functions/src/core.js   Validasi titik, transisi, pengaturan (diuji unit)
-firestore.rules / storage.rules / firestore.indexes.json
+firestore.rules / firestore.indexes.json
 scripts/                check-build, seed-emulator, migrate-from-default (dry-run)
-tests/                  unit (node:test) & emulator (Auth, Firestore, Storage, Functions)
+tests/                  unit (node:test) & emulator (Auth + Firestore)
 ```
 
-## Model data (database `denzipur`)
+## Model data (project `lintas-denzipur`, database default)
 
-| Koleksi | Isi | Ditulis oleh |
+| Koleksi | Isi | Ditulis oleh (ditegakkan Rules) |
 |---|---|---|
-| `akses/{uid}` | **izin aplikasi**: `role`, `status` (pending/active/blocked), `unitId`, `unitScope[]`, `email` | Functions saja |
-| `personel/{uid}` | **profil organisasi**: `nama`, `pangkat`, `jabatan`, `unitId`, `statusKeanggotaan`, `email` | Functions saja |
-| `undangan/{email}` | undangan aktivasi (`role`, `unitId`, `unitScope`) | sysadmin |
-| `unit/{unitId}` | `nama`, `kode`, `keterangan` | sysadmin |
-| `kegiatan/{id}` | `judul`, `unitId`, `penanggungJawabUid`, `pesertaUids[]`, `jadwalMulai/Selesai`, `lokasiNama/Lat/Lng`, `status` (rencana/berjalan/selesai/dibatalkan), `trackingDiizinkan` | sysadmin/operator unit |
-| `sesi/{sessionId}` | `uid`, `unitId`, `kegiatanId`, `deviceId`, `status` (aktif/selesai), `mulaiAt`, `selesaiAt`, `endedReason`, `lastSeq`, `pointCount`, `lastCapturedAt`, `lastReceivedAt` | Functions |
-| `sesi/{id}/titik/{deviceId_seq}` | riwayat: `lat`, `lng`, `acc`, `capturedAt` (perangkat), `receivedAt` (server), `seq`, `sumber`, `quality[]`, `terlambat` | Functions |
-| `lokasi_terkini/{sessionId}` | posisi terakhir per sesi + status sesi (dipisah dari riwayat agar pembacaan murah) | Functions |
-| `sesi_aktif/{uid}` | kunci satu sesi aktif per personel | Functions |
+| `akses/{uid}` | **izin aplikasi**: `role`, `status` (pending/active/blocked), `unitId`, `unitScope[]` | pemilik saat registrasi (selalu pending, kecuali undangan/bootstrap); sysadmin (bukan untuk dirinya) |
+| `personel/{uid}` | **profil organisasi**: nama, pangkat, jabatan, unit, status keanggotaan | registrasi; sysadmin; operator unit (tanpa ubah unit) |
+| `undangan/{email}` | undangan aktivasi | sysadmin; dihapus oleh yang diundang saat dipakai |
+| `unit/{unitId}` | nama, kode | sysadmin |
+| `kegiatan/{id}` | judul, unit, penanggung jawab, peserta, jadwal, lokasi, status, tracking diizinkan | sysadmin/operator unit; peserta hanya Rencana → Berjalan saat memulai sesi |
+| `sesi/{id}` | pemilik, unit, kegiatan, perangkat, status, waktu mulai/selesai, `lastSeq`, `pointCount`, `lastCapturedAt`, `lastIngestAt` | pemilik (mulai/kirim/akhiri); operator unit & sysadmin (akhiri) |
+| `sesi/{id}/titik/{seq}` | lat, lng, akurasi, `capturedAt` (perangkat), `receivedAt` (server), kualitas, terlambat | pemilik, hanya sebagai batch bersama kenaikan `lastSeq`; tidak dapat diubah |
+| `lokasi_terkini/{sesiId}` | posisi terakhir + status sesi | pemilik (hanya titik yang lebih baru); akhiri oleh pemilik/operator |
+| `sesi_aktif/{uid}` | kunci satu sesi aktif per personel | pemilik; hanya bisa ditimpa bila sesi lama tidak aktif |
 | `titik_manual/{id}` | titik input operator | sysadmin/operator unit |
-| `laporan/{id}` | `uid`, `unitId`, `kegiatanId`, `judul`, `isi`, `lokasi{lat,lng,acc,capturedAtMs}`, `fotoPaths[]`, `status` (draf/diajukan/perlu_revisi/disetujui), `pemeriksaUid`, `diperiksaAt`, `catatanRevisi` | pemilik/pemeriksa (Rules) |
-| `pengaturan/umum` | ambang & interval (lihat Pengaturan) | sysadmin |
-| `audit/{id}` | log audit (perubahan akses, sesi, laporan, akses riwayat lokasi, ekspor) | Functions |
-| `aktivitas/{id}` | umpan aktivitas per unit tanpa koordinat (dashboard) | Functions |
-
-ID kegiatan yang sama dipakai oleh sesi, laporan, dan dokumentasi (`laporan/{unit}/{uid}/{laporanId}/…` di Storage).
+| `laporan/{id}` + `foto/{fid}` | laporan & foto terkompresi | pemilik (Draf/Perlu Revisi); pemeriksa (Diajukan → Perlu Revisi/Disetujui) |
+| `pengaturan/umum` | ambang & interval | sysadmin |
+| `pengaturan/pemeliharaan` | hasil pemeliharaan terakhir | sysadmin |
+| `pengaturan/bootstrap` | `{emails: [...]}` administrator awal | **hanya pemilik project lewat Console** |
+| `audit/{id}` | log audit | staf atas namanya sendiri; dibaca sysadmin |
+| `aktivitas/{id}` | umpan per unit tanpa koordinat | pengguna aktif untuk unitnya |
 
 ## Matriks hak akses
 
-| Data / aksi | Administrator Sistem | Operator Unit | Pemeriksa Laporan | Pembaca Ringkasan | Anggota | Pending/Blocked/akun Benteng saja |
+| Data / aksi | Administrator Sistem | Operator Unit | Pemeriksa Laporan | Pembaca Ringkasan | Anggota | Pending / Blocked / tanpa akses |
 |---|---|---|---|---|---|---|
-| Dashboard (agregat) | semua unit | unit lingkup | unit lingkup | unit lingkup (tanpa angka lokasi) | – | ✕ |
+| Dashboard | semua unit | unit lingkup | unit lingkup (tanpa angka lokasi) | kegiatan & personel saja | – | ✕ |
 | Kegiatan: baca | semua | unit lingkup | unit lingkup | unit lingkup | yang ditugaskan | ✕ |
 | Kegiatan: kelola | ✓ | unit lingkup | ✕ | ✕ | ✕ | ✕ |
-| Live/riwayat lokasi sesi | ✓ (riwayat teraudit) | unit lingkup (teraudit) | ✕ | ✕ | milik sendiri | ✕ |
-| Mulai/kirim/akhiri sesi | – | akhiri sesi unitnya | – | – | milik sendiri, kegiatan yang ditugaskan | ✕ |
-| Laporan: baca | ✓ | unit lingkup | unit lingkup | ✕ | milik sendiri | ✕ |
+| Live/riwayat lokasi sesi | ✓ | unit lingkup | ✕ | ✕ | milik sendiri | ✕ |
+| Mulai/kirim/akhiri sesi | akhiri | akhiri sesi unitnya | – | – | milik sendiri, kegiatan yang ditugaskan | ✕ |
+| Laporan & foto: baca | ✓ | unit lingkup | unit lingkup | ✕ | milik sendiri | ✕ |
 | Laporan: buat/ubah/ajukan | – | – | – | – | milik sendiri saat Draf/Perlu Revisi | ✕ |
 | Laporan: setujui/minta revisi | ✓ (bukan milik sendiri) | ✕ | unit lingkup (bukan milik sendiri) | ✕ | ✕ | ✕ |
-| Foto dokumentasi | ✓ | unit lingkup | unit lingkup | ✕ | milik sendiri (unggah ke unitnya) | ✕ |
 | Titik manual | ✓ | kelola unit lingkup | baca unit lingkup | ✕ | ✕ | ✕ |
 | Personel: profil | ✓ | ubah profil unit lingkup | baca unit lingkup | baca unit lingkup | baca diri | baca diri |
-| Akses (peran/status/unit), undangan, unit, audit, pengaturan | ✓ | ✕ (pengaturan: baca) | ✕ (baca) | ✕ (baca) | ✕ | ✕ |
+| Akses, undangan, unit, audit, pengaturan | ✓ | ✕ (pengaturan umum: baca) | ✕ (baca) | ✕ (baca) | ✕ | ✕ |
 
 Prinsip yang diterapkan:
 - Pangkat dan jabatan tidak memberi izin apa pun.
-- Pengguna tidak dapat menulis `akses` atau `personel`.
-- Sysadmin tidak dapat mengubah aksesnya sendiri, dan sysadmin aktif terakhir tidak dapat diturunkan.
-- Pencabutan akses berlaku di Rules dan Functions saat itu juga. Untuk Storage, lihat batasan di bawah.
-
-**Lintas Benteng ↔ Denzipur:** akun Auth dipakai bersama. Database Denzipur hanya dapat diakses dengan dokumen `akses` aktif. Rules Denzipur tidak memberi akses apa pun ke database default Benteng, dan izin administrator Benteng tidak diubah.
-
-## Firebase yang digunakan
-- **Auth** (Google; email/sandi hanya untuk emulator).
-- **Firestore** database `denzipur` (Rules + indexes).
-- **Storage** bucket `lintas-benteng-denzipur`. Foto dibaca dengan `getBlob()` yang memerlukan autentikasi; tidak ada URL unduhan bertoken yang berumur panjang.
-- **Cloud Functions v2**: region `asia-southeast2`, Node 22, codebase `denzipur`.
-- **Cloud Scheduler** untuk `dzMaintenance` (setiap 30 menit).
-- **App Check**: opsional. Klien mengirim token bila `appCheckSiteKey` diisi; enforcement lewat `DZ_ENFORCE_APP_CHECK` (bawaan `false`).
-- **Hosting**: situs `lintas-denzipur`.
-
-Realtime Database (`databaseURL` di konfigurasi lama) **tidak** dipakai. Tidak ada database kedua yang ditambahkan untuk tracking: listener Firestore pada `lokasi_terkini` sudah cukup untuk pembaruan setiap ±30 detik.
+- Pengguna tidak dapat menaikkan peran atau mengaktifkan dirinya, kecuali lewat undangan sah yang sekaligus terpakai.
+- Sysadmin tidak dapat mengubah akses akunnya sendiri, sehingga selalu tersisa minimal satu sysadmin.
+- Pencabutan akses berlaku seketika di Rules, karena setiap permintaan membaca dokumen `akses`.
 
 ## Masa simpan & penghapusan
-- Riwayat titik (`sesi/*/titik`) dihapus `dzMaintenance` setelah `retentionDays` (bawaan 90 hari, dapat diatur 7–730) sejak sesi selesai. Dokumen `lokasi_terkini` sesi tersebut juga dihapus. Metadata sesi tetap ada dengan `titikDihapus: true`.
-- Sesi aktif tanpa pembaruan selama `autoEndMinutes` (bawaan 180 menit) diakhiri sistem dengan alasan "tidak ada pembaruan". Alasan ini menggambarkan data, bukan kesimpulan tentang kondisi personel.
-- Log `audit` dan `aktivitas` tidak dihapus otomatis. Kebijakan arsipnya perlu disetujui satuan.
+- Riwayat titik dihapus oleh pemeliharaan setelah `retentionDays` (bawaan 90 hari, rentang 7–730) sejak sesi selesai. Dokumen `lokasi_terkini` sesi itu juga dihapus; metadata sesi tetap ada dengan `titikDihapus: true`.
+- Sesi aktif tanpa pembaruan selama `autoEndMinutes` (bawaan 180) diakhiri dengan alasan "tidak ada pembaruan". Alasan ini hanya menggambarkan data, bukan kondisi personel.
+- Log `audit` dan `aktivitas` tidak dihapus otomatis.
+- Karena pemeliharaan berjalan dari peramban sysadmin, penghapusan hanya terjadi bila ada sysadmin yang membuka Dashboard atau menekan tombol pemeliharaan.
 
 ## Batasan keamanan yang diketahui
-- **Storage memakai klaim token.** Akun yang diblokir atau dipindah unit kehilangan akses Firestore dan Functions saat itu juga. Untuk Storage, klaim lama tetap berlaku sampai token ID diperbarui (maks. ±1 jam); refresh token dicabut saat blokir. Perpindahan unit setelah token diperbarui sudah diuji (tes 15).
-- **Listener lokasi terkini dibaca langsung dari klien**, jadi setiap pembacaan tidak dapat diaudit satu per satu. Yang dicatat adalah pembukaan halaman Live Tracking (`buka_live_tracking`, upaya terbaik dari klien). Akses **riwayat** lokasi wajib lewat `dzGetSessionTrack` dan selalu teraudit. Ekspor lokasi dan laporan juga dicatat.
-- **Foto Storage tidak bisa dihapus atau ditimpa dari klien.** Foto yatim dari laporan yang batal disimpan belum dibersihkan otomatis.
+- **Audit akses lokasi bersifat upaya terbaik.** Rules tidak dapat mewajibkan penulisan audit sebelum membaca. Operator yang memodifikasi kode klien dapat membaca riwayat tanpa jejak audit. Membaca riwayat tetap hanya mungkin bagi yang berhak.
+- **Penanda kualitas data dihitung klien**, sehingga dapat dihilangkan oleh klien yang dimodifikasi. Koordinat, waktu, dan urutan tetap divalidasi Rules.
+- **Pemblokiran tidak menutup sesi secara otomatis** bila dilakukan di luar aplikasi (misalnya lewat Console). Kiriman titik dari akun terblokir tetap ditolak.
+- **Kuota Spark**: 50.000 baca, 20.000 tulis, dan 20.000 hapus per hari; penyimpanan 1 GiB. Jika kuota habis, penulisan gagal sampai kuota direset (tengah malam waktu Pasifik, sekitar pukul 14.00–15.00 WIB). Titik tetap tersimpan di antrean perangkat. Lihat perhitungan di [TRACKING.md](TRACKING.md).
+- **Uji emulator**: setelah status akses berubah, koneksi pantau halaman yang sudah lama terbuka tidak menerima pembaruan. Aplikasi anggota menangani ini dengan memuat ulang dirinya ketika server menolak kiriman titik. Perilaku di produksi belum diverifikasi.

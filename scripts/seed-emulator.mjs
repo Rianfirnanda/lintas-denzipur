@@ -31,7 +31,6 @@ for (const [k, a, nama, pangkat] of users) {
   uid[k] = u.uid;
   await db.doc(`akses/${u.uid}`).set({ uid: u.uid, email, status: 'active', ...a, createdAt: Timestamp.now(), updatedAt: Timestamp.now() });
   await db.doc(`personel/${u.uid}`).set({ uid: u.uid, email, nama, pangkat, jabatan: a.role === 'anggota' ? 'Anggota' : 'Staf', unitId: a.unitId, statusKeanggotaan: 'aktif' });
-  await auth.setCustomUserClaims(u.uid, { dz: { r: a.role, s: 'active', u: a.unitId, sc: a.unitScope } });
 }
 // Akun pending (registrasi tanpa undangan)
 const pend = await auth.createUser({ email: 'pending@denzipur.test', password: PW, emailVerified: true }).catch(() => auth.getUserByEmail('pending@denzipur.test'));
@@ -48,5 +47,6 @@ await keg('KG-UJI-1', 'Latihan Uji Lapangan', 'UNIT-A', ['anggota1', 'anggota2']
 await keg('KG-UJI-2', 'Pemeliharaan Alat Uji', 'UNIT-A', ['anggota1'], 'rencana', 24);
 await keg('KG-UJI-3', 'Patroli Uji Unit B', 'UNIT-B', ['anggota3'], 'berjalan', -2);
 await db.doc('pengaturan/umum').set({ staleMinutes: 2, captureIntervalSec: 5, sendIntervalSec: 10, maxQueue: 500, autoEndMinutes: 180, retentionDays: 90 });
+await db.doc('pengaturan/bootstrap').set({ emails: ['bootstrap@denzipur.test'] });
 await db.doc('titik_manual/TM-UJI-1').set({ nama: 'Pos uji (fiktif)', keterangan: 'Titik manual uji', unitId: 'UNIT-A', kegiatanId: null, lat: -3.79, lng: 102.26, createdBy: uid['operator.a'], updatedAt: Timestamp.now() });
 console.log('Seed emulator selesai. Sandi semua akun uji:', PW);

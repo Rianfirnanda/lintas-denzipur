@@ -1,8 +1,8 @@
 // Utilitas halaman admin (dimuat di dalam iframe shell admin.html).
-import { auth, db, F, call, errText, onAuthStateChanged, DZ } from './js/firebase.js';
+import { auth, db, F, dz, errText, onAuthStateChanged, DZ } from './js/firebase.js';
 import { esc, LABEL, fmtTime, ago, tsMs, toCsv, createListenerScope } from './js/dz-core.js';
 
-export { auth, db, F, call, errText, DZ, esc, LABEL, fmtTime, ago, tsMs, toCsv, createListenerScope };
+export { auth, db, F, dz, errText, DZ, esc, LABEL, fmtTime, ago, tsMs, toCsv, createListenerScope };
 export const $ = (id) => document.getElementById(id);
 export const ADMIN_ROLES = ['sysadmin', 'operator', 'pemeriksa', 'pembaca'];
 

@@ -55,7 +55,7 @@ for (const d of keg.docs) {
     id: `legacy_${d.id}`, uid: x.userId, unitId: UNIT_DEFAULT, kegiatanId: `legacy_tanpa_kegiatan`, kegiatanJudul: x.judul || '(kegiatan lama)',
     judul: String(x.judul || 'Laporan lama').slice(0, 160), isi: String(x.catatan || x.deskripsi || '').slice(0, 5000),
     lokasi: Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng, acc: 0, capturedAtMs: ms(x) || 0 } : null,
-    fotoPaths: [], fotoUrlLama: typeof x.fotoUrl === 'string' ? x.fotoUrl : null, status: 'diajukan',
+    fotoIds: [], fotoUrlLama: typeof x.fotoUrl === 'string' ? x.fotoUrl : null, status: 'diajukan',
     pemeriksaUid: null, diperiksaAt: null, catatanRevisi: null, legacy: true, sumberLama: `lintas_kegiatan/${d.id}`,
     createdAtMs: ms(x),
   });

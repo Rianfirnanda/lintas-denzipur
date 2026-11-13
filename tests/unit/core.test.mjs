@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { TrackingQueue, freshness, csvCell, toCsv, classifyCallError, classifyGeoError, createListenerScope } from '../../public/js/dz-core.js';
-import { validatePoint, flagJumps, mergeSettings, canTransitionLaporan, freshness as srvFreshness } from '../../functions/src/core.js';
+import { TrackingQueue, freshness, csvCell, toCsv, classifyGeoError, createListenerScope, validatePoint, flagJumps, mergeSettings, canTransitionLaporan } from '../../public/js/dz-core.js';
 
 const mem = () => { const m = new Map(); return { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => m.set(k, v), removeItem: (k) => m.delete(k), m }; };
 
@@ -45,7 +44,6 @@ test('kesegaran lokasi berubah sesuai waktu', () => {
   assert.equal(freshness(null, t0, 5), 'belum_ada');
   assert.equal(freshness(t0, t0 + 4 * 60000, 5), 'baru');
   assert.equal(freshness(t0, t0 + 6 * 60000, 5), 'kedaluwarsa');
-  assert.equal(srvFreshness(t0, t0 + 6 * 60000, 5), 'kedaluwarsa');
 });
 
 test('CSV: sel berbahaya diberi awalan petik', () => {
@@ -57,12 +55,7 @@ test('CSV: sel berbahaya diberi awalan petik', () => {
   assert.equal(toCsv([['a', 'b'], [1, null]]), '"a","b"\r\n"1",""');
 });
 
-test('klasifikasi galat panggilan', () => {
-  assert.equal(classifyCallError({ code: 'functions/failed-precondition', details: { reason: 'sesi_ditutup' } }), 'session_closed');
-  assert.equal(classifyCallError({ code: 'functions/failed-precondition', details: { reason: 'perangkat_lain' } }), 'other_device');
-  assert.equal(classifyCallError({ code: 'functions/permission-denied', details: { reason: 'blocked' } }), 'account_inactive');
-  assert.equal(classifyCallError({ code: 'functions/unavailable' }), 'retry');
-  assert.equal(classifyCallError({ code: 'functions/resource-exhausted' }), 'backoff');
+test('klasifikasi galat lokasi', () => {
   assert.equal(classifyGeoError({ code: 1 }).kind, 'denied');
   assert.equal(classifyGeoError({ code: 2 }).kind, 'unavailable');
 });

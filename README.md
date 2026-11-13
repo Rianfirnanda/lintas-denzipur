@@ -4,14 +4,11 @@ Administrasi personel, kegiatan rutin, laporan, dokumentasi, dan tracking berbas
 
 - **Admin**: `public/admin.html`. Dashboard, Kegiatan, Tracking (Live / Riwayat Sesi / Lokasi Laporan & Titik Manual), Laporan, Dokumentasi, Rekap, Personel & Akses, Unit, Log Audit, Pengaturan.
 - **Aplikasi anggota**: `public/anggota.html`. Tracking berbasis sesi (aplikasi web) dan laporan kegiatan berfoto.
-- **Backend**: project Firebase tersendiri `lintas-denzipur` (Firestore, Storage, Cloud Functions, Hosting), terpisah total dari project Lintas Benteng.
+- **Backend**: project Firebase tersendiri `lintas-denzipur` di paket **Spark (gratis)**: Authentication, Firestore, dan Hosting saja. Penegakan akses sepenuhnya di Firestore Security Rules; tanpa Cloud Functions dan Cloud Storage. Terpisah total dari project Lintas Benteng.
 
 ## Mulai cepat (lokal, emulator — tanpa menyentuh produksi)
 ```bash
 npm install
-```
-```bash
-cd functions && npm install && cd ..
 ```
 ```bash
 npm run serve
